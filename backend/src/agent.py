@@ -1,12 +1,16 @@
 import os
 
+from pathlib import Path
 from dotenv import load_dotenv
 from google import genai
 from google.genai import types
 
 from . import tools
 
-load_dotenv()
+# Cek file .env di backend/ maupun di root folder utama
+load_dotenv(Path(__file__).resolve().parents[1] / ".env")
+load_dotenv(Path(__file__).resolve().parents[2] / ".env")
+
 
 MODEL = "gemini-2.5-flash"
 

@@ -3,10 +3,13 @@ from typing import Any, List
 from fastapi import FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+from pathlib import Path
 from dotenv import load_dotenv
 
-# Memastikan environment variables dari .env ter-load
-load_dotenv()
+# Cek file .env di backend/ maupun di folder utama (root)
+load_dotenv(Path(__file__).resolve().parent / ".env")
+load_dotenv(Path(__file__).resolve().parent.parent / ".env")
+
 
 from src import database
 from src.agent import TempoAgent
