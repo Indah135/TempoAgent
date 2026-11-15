@@ -1,8 +1,17 @@
 import React, { useState, useEffect } from 'react';
-import { Clock, Sparkles, LogOut, User } from 'lucide-react';
+import { Clock, Sparkles, Hand } from 'lucide-react';
 
-export default function Header({ user, onLogout }) {
+// Ucapan sesuai jam saat ini
+function getGreeting(hour) {
+  if (hour >= 4 && hour < 11) return 'Selamat pagi';
+  if (hour >= 11 && hour < 15) return 'Selamat siang';
+  if (hour >= 15 && hour < 19) return 'Selamat sore';
+  return 'Selamat malam';
+}
+
+export default function Header({ user }) {
   const [currentDateTime, setCurrentDateTime] = useState('');
+  const [greeting, setGreeting] = useState('');
 
   useEffect(() => {
     const updateTime = () => {
@@ -16,6 +25,7 @@ export default function Header({ user, onLogout }) {
         minute: '2-digit',
       };
       setCurrentDateTime(now.toLocaleDateString('id-ID', options));
+      setGreeting(getGreeting(now.getHours()));
     };
 
     updateTime();
@@ -26,7 +36,7 @@ export default function Header({ user, onLogout }) {
   const displayName =
     user?.user_metadata?.full_name ||
     user?.email?.split('@')[0] ||
-    'Pengguna';
+    '';
 
   return (
     <header className="bg-white/80 backdrop-blur-md border-b border-slate-200/80 sticky top-0 z-30 shadow-xs">
@@ -52,37 +62,21 @@ export default function Header({ user, onLogout }) {
           </div>
         </div>
 
-        {/* Right Section: Live Time, User Profile & Logout */}
+        {/* Right Section: Greeting & Live Time */}
         <div className="flex flex-wrap items-center gap-2.5 self-start sm:self-auto">
-          {/* Live Clock Badge */}
+          {/* Ucapan sesuai waktu */}
+          <div className="flex items-center gap-1.5 text-xs font-semibold text-sky-700 bg-sky-50 border border-sky-100 px-3 py-1.5 rounded-lg">
+            <Hand className="w-3.5 h-3.5 text-sky-600" />
+            <span>
+              {greeting}
+              {displayName ? `, ${displayName}` : ''}!
+            </span>
+          </div>
+
           <div className="flex items-center gap-2 text-xs font-medium text-slate-600 bg-slate-50 border border-slate-200/70 px-3 py-1.5 rounded-lg">
             <Clock className="w-3.5 h-3.5 text-sky-600" />
             <span>{currentDateTime || 'Memuat waktu...'}</span>
           </div>
-
-          {/* User Profile Pill & Logout Button */}
-          {user && (
-            <div className="flex items-center gap-2 pl-2 border-l border-slate-200">
-              <div className="flex items-center gap-2 bg-sky-50/80 border border-sky-100 text-sky-900 px-2.5 py-1.5 rounded-lg text-xs font-medium">
-                <div className="w-5 h-5 rounded-full bg-sky-500 text-white flex items-center justify-center text-[10px] font-bold">
-                  {displayName.charAt(0).toUpperCase()}
-                </div>
-                <span className="max-w-[120px] truncate" title={user.email}>
-                  {displayName}
-                </span>
-              </div>
-
-              <button
-                type="button"
-                onClick={onLogout}
-                title="Keluar dari akun (Logout)"
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-rose-600 hover:text-rose-700 bg-rose-50 hover:bg-rose-100/80 border border-rose-200/70 transition-all duration-150 active:scale-95"
-              >
-                <LogOut className="w-3.5 h-3.5" />
-                <span className="hidden sm:inline">Logout</span>
-              </button>
-            </div>
-          )}
         </div>
       </div>
     </header>

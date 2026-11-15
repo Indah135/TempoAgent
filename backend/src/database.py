@@ -40,15 +40,59 @@ def get_schedules_by_date(user_id: str, schedule_date: str) -> list[dict[str, An
 
 
 def get_all_upcoming_schedules(user_id: str) -> list[dict[str, Any]]:
-    now_iso = datetime.now(timezone.utc).isoformat()
+    # Ambil jadwal dari awal hari ini (atau semua jadwal terbaru jika hari ini kosong)
+    today_start = datetime.now().strftime("%Y-%m-%dT00:00:00+07:00")
     response = (
         client.table(TABLE)
         .select("*")
         .eq("user_id", user_id)
-        .gte("start_time", now_iso)
+        .gte("start_time", today_start)
         .order("start_time")
         .execute()
     )
+    data = response.data or []
+    if not data:
+        # Jika belum ada jadwal mendatang, tampilkan jadwal terbaru agar pengguna tetap bisa mengelola
+        recent = (
+            client.table(TABLE)
+            .select("*")
+            .eq("user_id", user_id)
+            .order("start_time", desc=True)
+            .limit(20)
+            .execute()
+            .data
+            or []
+        )
+        recent.reverse()
+        return recent
+    return data
+
+
+def get_schedule_by_id(schedule_id: str) -> dict[str, Any] | None:
+    response = client.table(TABLE).select("*").eq("id", schedule_id).execute()
+    if response.data:
+        return response.data[0]
+    return None
+
+
+def get_all_schedules(user_id: str, limit: int = 500) -> list[dict[str, Any]]:
+    """Seluruh jadwal user (termasuk yang sudah lewat) untuk fitur Riwayat Tugas."""
+    response = (
+        client.table(TABLE)
+        .select("*")
+        .eq("user_id", user_id)
+        .order("start_time")
+        .limit(limit)
+        .execute()
+    )
+    return response.data or []
+
+
+def search_schedules(user_id: str, query: str = "") -> list[dict[str, Any]]:
+    req = client.table(TABLE).select("*").eq("user_id", user_id)
+    if query:
+        req = req.ilike("title", f"%{query}%")
+    response = req.order("start_time").limit(20).execute()
     return response.data or []
 
 
@@ -58,7 +102,7 @@ def insert_schedule(
     description: str,
     start_time: str,
     end_time: str,
-    status: str = "pending",
+    status: str = "active",
     priority: str = "medium",
 ) -> dict[str, Any] | None:
     # start_time & end_time menggunakan format timestamptz, contoh: "2026-11-15T09:00:00+07:00"
@@ -77,6 +121,25 @@ def insert_schedule(
         )
         .execute()
     )
+    if response.data:
+        return response.data[0]
+    return None
+
+
+def update_schedule(schedule_id: str, updates: dict[str, Any]) -> dict[str, Any] | None:
+    allowed_keys = {
+        "title",
+        "description",
+        "start_time",
+        "end_time",
+        "status",
+        "priority",
+    }
+    payload = {k: v for k, v in updates.items() if k in allowed_keys and v is not None}
+    if not payload:
+        return None
+
+    response = client.table(TABLE).update(payload).eq("id", schedule_id).execute()
     if response.data:
         return response.data[0]
     return None

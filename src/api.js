@@ -29,6 +29,17 @@ export async function fetchSchedules() {
   return data.schedules || [];
 }
 
+export async function fetchAllSchedules() {
+  const response = await fetch(`${API_BASE_URL}/api/schedules/all`);
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}));
+    throw new Error(errorData.detail || `Server returned ${response.status}`);
+  }
+
+  const data = await response.json();
+  return data.schedules || [];
+}
+
 export async function deleteSchedule(scheduleId) {
   const response = await fetch(`${API_BASE_URL}/api/schedules/${scheduleId}`, {
     method: 'DELETE',

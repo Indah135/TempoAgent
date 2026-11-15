@@ -1,3 +1,4 @@
+import ast
 import json
 import os
 from datetime import datetime
@@ -5,7 +6,6 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List
 
 from dotenv import load_dotenv
-# pyrefly: ignore[missing-import]
 from groq import Groq
 
 from . import tools
@@ -25,91 +25,17 @@ FALLBACK_MODELS = [
 ]
 MAX_TOOL_ROUNDS = 6
 
-
-def _is_model_not_found(exc: Exception) -> bool:
-    """True jika error karena model tidak tersedia pada API key ini."""
-    text = str(exc).lower()
-    return "model_not_found" in text or "does not exist or you do not have access" in text
-
-
-# Alias argumen yang sering salah ditulis model, dipetakan ke nama resmi
-ARG_ALIASES: Dict[str, Dict[str, str]] = {
-    "check_availability": {
-        "schedule_date": "date",
-        "tanggal": "date",
-        "day": "date",
-    },
-    "create_new_schedule": {
-        "schedule_date": "date",
-        "tanggal": "date",
-        "start": "start_time",
-        "end": "end_time",
-        "jam_mulai": "start_time",
-        "jam_selesai": "end_time",
-    },
-}
-
-# Argumen wajib per tool (dipakai untuk validasi sebelum eksekusi)
-REQUIRED_ARGS: Dict[str, List[str]] = {
-    "check_availability": ["date"],
-    "create_new_schedule": ["title", "description", "date", "start_time", "end_time"],
-}
-
-
-def _normalize_args(name: str, args: Dict[str, Any]) -> Dict[str, Any]:
-    """Petakan alias argumen ke nama parameter yang benar."""
-    aliases = ARG_ALIASES.get(name, {})
-    normalized: Dict[str, Any] = {}
-    for key, value in args.items():
-        normalized[aliases.get(key, key)] = value
-    return normalized
-
-
-def _recover_tool_call(exc: Exception) -> tuple[str, str, str] | None:
-    """Ambil tool call yang gagal validasi dari error Groq (`failed_generation`).
-
-    Groq menyertakan JSON generasi model yang salah dalam field
-    `failed_generation`; kita bisa pakai ulang agar percakapan tidak putus.
-    """
-    text = str(exc)
-    start = text.find("{")
-    end = text.rfind("}")
-    if start == -1 or end == -1:
-        return None
-    raw = text[start : end + 1]
-    try:
-        data = json.loads(raw)
-    except Exception:
-        try:
-            import ast
-
-            data = ast.literal_eval(raw)
-        except Exception:
-            return None
-    if not isinstance(data, dict):
-        return None
-    failed = data.get("failed_generation") or (
-        data.get("error", {}).get("failed_generation")
-        if isinstance(data.get("error"), dict)
-        else None
-    )
-    if not failed:
-        return None
-    try:
-        generation = json.loads(failed)
-        tool_name = generation["name"]
-        args = generation.get("arguments", {})
-    except Exception:
-        return None
-    raw_args = args if isinstance(args, str) else json.dumps(args)
-    tool_call_id = f"recover-{abs(hash(raw_args + tool_name))}"
-    return tool_name, raw_args, tool_call_id
-
 # Fungsi tool yang tersedia untuk function calling
 TOOL_FUNCTIONS: Dict[str, Callable[..., Any]] = {
     "check_availability": tools.check_availability,
+    "list_schedules": tools.list_schedules,
     "create_new_schedule": tools.create_new_schedule,
+    "update_existing_schedule": tools.update_existing_schedule,
+    "delete_existing_schedule": tools.delete_existing_schedule,
+    "manage_schedule_by_title": tools.manage_schedule_by_title,
 }
+
+_STR = {"type": "string"}
 
 # Skema tool bergaya OpenAI function calling (dipakai Groq)
 TOOLS_SCHEMA: List[Dict[str, Any]] = [
@@ -118,18 +44,41 @@ TOOLS_SCHEMA: List[Dict[str, Any]] = [
         "function": {
             "name": "check_availability",
             "description": (
-                "Memeriksa seluruh jadwal yang sudah tersimpan pada tanggal "
-                "tertentu. WAJIB dipanggil sebelum create_new_schedule."
+                "Memeriksa seluruh jadwal pada tanggal tertentu beserta ID dan "
+                "statusnya. Disarankan dipanggil sebelum create_new_schedule."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "date": {
-                        "type": "string",
+                        **_STR,
                         "description": "Tanggal dalam format YYYY-MM-DD, contoh 2026-11-15.",
                     }
                 },
                 "required": ["date"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "list_schedules",
+            "description": (
+                "Mencari atau menampilkan daftar jadwal pengguna beserta ID, jam, "
+                "dan statusnya. Gunakan untuk edit, aktivasi, atau hapus jadwal."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        **_STR,
+                        "description": (
+                            "Kata kunci judul jadwal (kosongkan/isi '' untuk "
+                            "melihat jadwal mendatang)."
+                        ),
+                    }
+                },
+                "required": [],
             },
         },
     },
@@ -161,12 +110,204 @@ TOOLS_SCHEMA: List[Dict[str, Any]] = [
                         "type": "string",
                         "description": "Jam selesai format HH:MM (24 jam), contoh 21:00.",
                     },
+                    "status": {
+                        "type": "string",
+                        "description": "Status jadwal, default 'active'.",
+                    },
                 },
                 "required": ["title", "description", "date", "start_time", "end_time"],
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "update_existing_schedule",
+            "description": (
+                "Memperbarui informasi jadwal (status, waktu, judul, deskripsi) "
+                "berdasarkan ID jadwal."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "schedule_id": {
+                        "type": "string",
+                        "description": "UUID jadwal yang ingin diperbarui.",
+                    },
+                    "title": {"type": "string", "description": "Judul baru (opsional)."},
+                    "description": {
+                        "type": "string",
+                        "description": "Deskripsi baru (opsional).",
+                    },
+                    "date": {
+                        "type": "string",
+                        "description": "Tanggal baru YYYY-MM-DD (opsional).",
+                    },
+                    "start_time": {
+                        "type": "string",
+                        "description": "Jam mulai baru HH:MM (opsional).",
+                    },
+                    "end_time": {
+                        "type": "string",
+                        "description": "Jam selesai baru HH:MM (opsional).",
+                    },
+                    "status": {
+                        "type": "string",
+                        "description": (
+                            "Status baru: 'active' (aktifkan), 'inactive' "
+                            "(nonaktifkan), 'completed' (selesai)."
+                        ),
+                    },
+                },
+                "required": ["schedule_id"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "delete_existing_schedule",
+            "description": "Menghapus jadwal berdasarkan ID dari database.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "schedule_id": {
+                        "type": "string",
+                        "description": "UUID jadwal yang ingin dihapus.",
+                    }
+                },
+                "required": ["schedule_id"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "manage_schedule_by_title",
+            "description": (
+                "Mengelola jadwal berdasarkan pencarian judul (tanpa harus tahu "
+                "ID jadwal): activate, deactivate, complete, delete, atau update."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "title_keyword": {
+                        "type": "string",
+                        "description": "Kata kunci judul jadwal (contoh: 'belajar python').",
+                    },
+                    "action": {
+                        "type": "string",
+                        "description": (
+                            "Aksi: 'activate', 'deactivate', 'complete', "
+                            "'delete', atau 'update'."
+                        ),
+                    },
+                    "new_status": {
+                        "type": "string",
+                        "description": "Status baru jika action='update'.",
+                    },
+                    "new_date": {
+                        "type": "string",
+                        "description": "Tanggal baru YYYY-MM-DD jika diubah.",
+                    },
+                    "new_start_time": {
+                        "type": "string",
+                        "description": "Jam mulai baru HH:MM jika diubah.",
+                    },
+                    "new_end_time": {
+                        "type": "string",
+                        "description": "Jam selesai baru HH:MM jika diubah.",
+                    },
+                    "new_title": {"type": "string", "description": "Judul baru jika diubah."},
+                },
+                "required": ["title_keyword", "action"],
+            },
+        },
+    },
 ]
+
+# Argumen wajib per tool (dipakai untuk validasi sebelum eksekusi)
+REQUIRED_ARGS: Dict[str, List[str]] = {
+    "check_availability": ["date"],
+    "list_schedules": [],
+    "create_new_schedule": ["title", "description", "date", "start_time", "end_time"],
+    "update_existing_schedule": ["schedule_id"],
+    "delete_existing_schedule": ["schedule_id"],
+    "manage_schedule_by_title": ["title_keyword", "action"],
+}
+
+# Alias argumen yang sering salah ditulis model, dipetakan ke nama resmi
+ARG_ALIASES: Dict[str, Dict[str, str]] = {
+    "check_availability": {"schedule_date": "date", "tanggal": "date", "day": "date"},
+    "list_schedules": {"keyword": "query", "q": "query"},
+    "create_new_schedule": {
+        "schedule_date": "date",
+        "tanggal": "date",
+        "start": "start_time",
+        "end": "end_time",
+        "jam_mulai": "start_time",
+        "jam_selesai": "end_time",
+    },
+    "update_existing_schedule": {
+        "id": "schedule_id",
+        "schedule_date": "date",
+        "tanggal": "date",
+        "start": "start_time",
+        "end": "end_time",
+    },
+    "delete_existing_schedule": {"id": "schedule_id"},
+    "manage_schedule_by_title": {"keyword": "title_keyword", "judul": "title_keyword"},
+}
+
+
+def _is_model_not_found(exc: Exception) -> bool:
+    """True jika error karena model tidak tersedia pada API key ini."""
+    text = str(exc).lower()
+    return "model_not_found" in text or "does not exist or you do not have access" in text
+
+
+def _normalize_args(name: str, args: Dict[str, Any]) -> Dict[str, Any]:
+    """Petakan alias argumen ke nama parameter yang benar."""
+    aliases = ARG_ALIASES.get(name, {})
+    return {aliases.get(key, key): value for key, value in args.items()}
+
+
+def _recover_tool_call(exc: Exception) -> tuple[str, str, str] | None:
+    """Ambil tool call yang gagal validasi dari error Groq (`failed_generation`).
+
+    Groq menyertakan JSON generasi model yang salah dalam field
+    `failed_generation`; kita bisa pakai ulang agar percakapan tidak putus.
+    """
+    text = str(exc)
+    start = text.find("{")
+    end = text.rfind("}")
+    if start == -1 or end == -1:
+        return None
+    raw = text[start : end + 1]
+    try:
+        data = json.loads(raw)
+    except Exception:
+        try:
+            data = ast.literal_eval(raw)
+        except Exception:
+            return None
+    if not isinstance(data, dict):
+        return None
+    error = data.get("error")
+    failed = data.get("failed_generation") or (
+        error.get("failed_generation") if isinstance(error, dict) else None
+    )
+    if not failed:
+        return None
+    try:
+        generation = json.loads(failed)
+        tool_name = generation["name"]
+        args = generation.get("arguments", {})
+    except Exception:
+        return None
+    raw_args = args if isinstance(args, str) else json.dumps(args)
+    tool_call_id = f"recover-{abs(hash(raw_args + tool_name))}"
+    return tool_name, raw_args, tool_call_id
 
 
 def get_system_instruction(current_time: str) -> str:
@@ -179,13 +320,14 @@ Gunakan acuan waktu saat ini tersebut untuk menghitung dan memahami kata waktu r
 
 Aturan wajib:
 1. Waktu relatif: Hitung tanggal pasti berdasarkan acuan waktu di atas. Contoh: jika hari ini 2026-11-15 (Sunday), maka "besok" adalah 2026-11-16 (Monday).
-2. Cek bentrok: Sebelum memanggil create_new_schedule, kamu WAJIB memanggil check_availability pada tanggal tersebut. Jika jadwal baru bentrok dengan jadwal yang sudah ada, jangan buat jadwalnya; beri tahu pengguna jadwal yang bentrok dan tawarkan jam alternatif yang bebas.
-3. Target belajar atau sub-tugas: Jika diminta menyusun target belajar atau sub-tugas, masukkan seluruh poinnya ke dalam kolom description (satu poin per baris, diawali "- "), lalu buat jadwalnya dengan judul yang ringkas.
-4. Format data: date harus YYYY-MM-DD; start_time dan end_time harus HH:MM (24 jam). Pastikan end_time lebih besar daripada start_time.
-5. Setelah jadwal berhasil dibuat, konfirmasikan judul, tanggal, dan jamnya secara ringkas.
-6. Penghapusan jadwal dilakukan lewat tombol Hapus pada panel jadwal di sebelah kanan aplikasi; jika diminta menghapus jadwal, arahkan pengguna ke tombol tersebut.
-7. Semua informasi jadwal wajib berasal dari hasil tool, jangan mengarang data.
-8. Jawab selalu dengan ringkas, ramah, dan dalam Bahasa Indonesia.
+2. Cek bentrok saat buat jadwal baru: Sebelum memanggil create_new_schedule, kamu disarankan memanggil check_availability pada tanggal tersebut. Jika bentrok, tawarkan jam alternatif yang bebas.
+3. Mengaktifkan / Menonaktifkan / Mengedit / Menghapus:
+   - Jika pengguna meminta "aktifkan jadwal X", "nonaktifkan jadwal Y", "ubah jam jadwal Z", atau "hapus jadwal W", langsung panggil tool yang relevan (seperti manage_schedule_by_title atau update_existing_schedule).
+   - Setelah operasi selesai, berikan konfirmasi ringkas dan ramah mengenai status jadwal tersebut.
+4. Target belajar atau sub-tugas: Jika diminta menyusun target belajar atau sub-tugas, masukkan seluruh poinnya ke dalam kolom description (satu poin per baris, diawali "- "), lalu buat jadwalnya dengan judul yang ringkas.
+5. Format data: date harus YYYY-MM-DD; start_time dan end_time harus HH:MM (24 jam). Pastikan end_time lebih besar daripada start_time.
+6. Semua informasi jadwal wajib berasal dari hasil tool, jangan mengarang data.
+7. Jawab selalu dengan ringkas, ramah, dan dalam Bahasa Indonesia.
 """
 
 
@@ -223,14 +365,36 @@ class TempoAgent:
                 if _is_model_not_found(api_exc):
                     self._tried_models.append(self.model)
                     remaining = [
-                        m
-                        for m in self.model_candidates
-                        if m not in self._tried_models
+                        m for m in self.model_candidates if m not in self._tried_models
                     ]
                     if remaining:
                         self.model = remaining[0]
                         continue
                 raise
+
+    def _run_tool(self, name: str, raw_args: str) -> str:
+        """Jalankan satu tool call dengan try...except.
+
+        Hasil database (atau pesan error) selalu dikembalikan ke model
+        untuk dirangkum menjadi jawaban Bahasa Indonesia.
+        """
+        try:
+            function: Callable[..., Any] | None = TOOL_FUNCTIONS.get(name)
+            if function is None:
+                raise ValueError(f"Tool tidak dikenal: {name}")
+            args = json.loads(raw_args or "{}")
+            if not isinstance(args, dict):
+                raise ValueError("Argumen tool harus berupa object JSON.")
+            args = _normalize_args(name, args)
+            missing = [
+                key for key in REQUIRED_ARGS.get(name, []) if args.get(key) in (None, "")
+            ]
+            if missing:
+                raise ValueError(f"Argumen wajib belum diisi: {', '.join(missing)}")
+            return str(function(**args))
+        except Exception as exc:
+            # Tangani error tool, kembalikan pesan error ke model agar dirangkum
+            return f"Tool {name} gagal dijalankan: {str(exc)}"
 
     def send_message(self, message: str) -> str:
         """Mengirim pesan ke Groq dengan waktu dinamis yang di-inject langsung.
@@ -247,7 +411,6 @@ class TempoAgent:
             # 2. Loop eksekusi tool call
             for _ in range(MAX_TOOL_ROUNDS):
                 recovered = None
-                choice = None
                 try:
                     response = self._create_completion()
                     choice = response.choices[0].message
@@ -270,11 +433,7 @@ class TempoAgent:
                     ]
                     result = self._run_tool(name, raw_args)
                     self.messages.append(
-                        {
-                            "role": "assistant",
-                            "content": None,
-                            "tool_calls": tool_calls,
-                        }
+                        {"role": "assistant", "content": None, "tool_calls": tool_calls}
                     )
                     self.messages.append(
                         {
@@ -290,9 +449,7 @@ class TempoAgent:
                     text = (choice.content or "").strip()
                     if not text:
                         return "Maaf, saya belum bisa memproses pesan itu. Coba tulis ulang."
-                    self.messages.append(
-                        {"role": "assistant", "content": text}
-                    )
+                    self.messages.append({"role": "assistant", "content": text})
                     return text
 
                 # Simpan pesan assistant yang berisi tool_calls
@@ -316,29 +473,5 @@ class TempoAgent:
                 "Coba sederhanakan permintaanmu ya."
             )
         except Exception as exc:
-            # 4. Tangani error dari Groq API atau Supabase dengan pesan yang jelas
+            # Tangani error dari Groq API atau Supabase dengan pesan yang jelas
             return f"Terjadi kesalahan saat memproses permintaan: {str(exc)}"
-
-    def _run_tool(self, name: str, raw_args: str) -> str:
-        """Jalankan satu tool call dengan try...except.
-
-        Hasil database (atau pesan error) selalu dikembalikan ke model
-        untuk dirangkum menjadi jawaban Bahasa Indonesia.
-        """
-        try:
-            function: Callable[..., Any] | None = TOOL_FUNCTIONS.get(name)
-            if function is None:
-                raise ValueError(f"Tool tidak dikenal: {name}")
-            args = json.loads(raw_args or "{}")
-            if not isinstance(args, dict):
-                raise ValueError("Argumen tool harus berupa object JSON.")
-            args = _normalize_args(name, args)
-            missing = [
-                key for key in REQUIRED_ARGS.get(name, []) if args.get(key) in (None, "")
-            ]
-            if missing:
-                raise ValueError(f"Argumen wajib belum diisi: {', '.join(missing)}")
-            return str(function(**args))
-        except Exception as exc:
-            # 3. Tangani error tool, kembalikan pesan error ke model
-            return f"Tool {name} gagal dijalankan: {str(exc)}"

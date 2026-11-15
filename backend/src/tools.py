@@ -20,20 +20,12 @@ _BULAN = [
     "Desember",
 ]
 
-# Zona waktu konsisten dengan format yang dipakai database.py (+07:00)
 _TZ_OFFSET = "+07:00"
-
-# Cache user_id agar tidak query berulang-ulang
 _USER_ID_CACHE: str | None = None
 
 
 def resolve_user_id() -> str:
-    """Menentukan user_id untuk operasi jadwal.
-
-    Prioritas:
-    1. Variabel env USER_ID / DEFAULT_USER_ID
-    2. Ambil user pertama dari tabel Profiles (fallback single-user)
-    """
+    """Menentukan user_id untuk operasi jadwal."""
     global _USER_ID_CACHE
     if _USER_ID_CACHE:
         return _USER_ID_CACHE
@@ -63,12 +55,12 @@ def resolve_user_id() -> str:
 
 
 def _to_timestamptz(date: str, time: str) -> str:
-    """Gabungkan YYYY-MM-DD dan HH:MM menjadi timestamptz ala database.py."""
+    """Gabungkan YYYY-MM-DD dan HH:MM menjadi timestamptz (+07:00)."""
     return f"{date}T{time}:00{_TZ_OFFSET}"
 
 
 def _format_time(value: Any) -> str:
-    """Ambil bagian HH:MM dari kolom time/timestamptz (dikonversi ke +07:00)."""
+    """Ambil bagian HH:MM dari kolom time/timestamptz."""
     text = str(value)
     if "T" not in text:
         return text[:5]
@@ -83,18 +75,12 @@ def _format_time(value: Any) -> str:
         return text.split("T", 1)[1][:5]
 
 
-def get_current_datetime() -> str:
-    """Mengembalikan tanggal, hari, dan jam saat ini.
-
-    Returns:
-        Waktu sekarang dalam format lokal, contoh:
-        "Sabtu, 14 November 2026 10:32 WIB".
-    """
-    now = datetime.now().astimezone()
-    hari = _HARI[now.weekday()]
-    bulan = _BULAN[now.month - 1]
-    zona = now.tzname() or ""
-    return f"{hari}, {now.day} {bulan} {now.year} {now.strftime('%H:%M')} {zona}".strip()
+def _format_date(value: Any) -> str:
+    """Ambil bagian YYYY-MM-DD dari kolom timestamptz."""
+    text = str(value)
+    if "T" in text:
+        return text.split("T")[0]
+    return text[:10]
 
 
 def check_availability(date: str) -> str:
@@ -104,8 +90,7 @@ def check_availability(date: str) -> str:
         date: Tanggal dalam format YYYY-MM-DD, contoh "2026-11-15".
 
     Returns:
-        Ringkasan seluruh jadwal pada tanggal tersebut, atau pesan bahwa
-        hari itu kosong / format tanggal tidak valid.
+        Ringkasan seluruh jadwal pada tanggal tersebut beserta statusnya.
     """
     try:
         datetime.strptime(date, "%Y-%m-%d")
@@ -116,14 +101,48 @@ def check_availability(date: str) -> str:
     if not schedules:
         return f"Tidak ada jadwal pada {date}. Hari tersebut kosong."
 
-    lines = [f"Jadwal yang sudah ada pada {date}:"]
+    lines = [f"Jadwal pada {date}:"]
     for item in schedules:
         mulai = _format_time(item["start_time"])
         selesai = _format_time(item["end_time"])
-        baris = f"- {mulai}-{selesai} | {item['title']}"
+        status = item.get("status", "active")
+        id_str = item.get("id", "")
+        baris = f"- [ID: {id_str}] {mulai}-{selesai} | {item['title']} (Status: {status})"
         if item.get("description"):
             baris += f" | {item['description']}"
         lines.append(baris)
+    return "\n".join(lines)
+
+
+def list_schedules(query: str = "") -> str:
+    """Mencari atau menampilkan daftar jadwal pengguna beserta ID, jam, dan statusnya.
+
+    Args:
+        query: Kata kunci judul jadwal (kosongkan untuk melihat jadwal mendatang).
+
+    Returns:
+        Daftar jadwal lengkap dengan ID untuk keperluan edit, aktivasi, atau hapus.
+    """
+    user_id = resolve_user_id()
+    if query.strip():
+        items = database.search_schedules(user_id, query.strip())
+    else:
+        items = database.get_all_upcoming_schedules(user_id)
+
+    if not items:
+        if query:
+            return f"Tidak ditemukan jadwal yang cocok dengan kata kunci '{query}'."
+        return "Belum ada jadwal yang tersimpan."
+
+    lines = ["Daftar Jadwal:"]
+    for item in items:
+        tgl = _format_date(item["start_time"])
+        mulai = _format_time(item["start_time"])
+        selesai = _format_time(item["end_time"])
+        st = item.get("status", "active")
+        lines.append(
+            f"- ID: {item['id']} | {item['title']} | Tanggal: {tgl} | Jam: {mulai}-{selesai} | Status: {st}"
+        )
     return "\n".join(lines)
 
 
@@ -133,19 +152,17 @@ def create_new_schedule(
     date: str,
     start_time: str,
     end_time: str,
+    status: str = "active",
 ) -> str:
     """Menambahkan jadwal baru ke database setelah validasi input.
 
     Args:
         title: Judul jadwal.
-        description: Deskripsi, target belajar, atau daftar sub-tugas
-            (satu poin per baris, diawali "- ").
+        description: Deskripsi, target belajar, atau daftar sub-tugas.
         date: Tanggal jadwal dalam format YYYY-MM-DD.
         start_time: Jam mulai dalam format HH:MM (24 jam), contoh "19:00".
         end_time: Jam selesai dalam format HH:MM (24 jam), contoh "21:00".
-
-    Returns:
-        Konfirmasi berhasil beserta detail jadwal, atau pesan kesalahan.
+        status: Status jadwal (default: "active", atau "scheduled").
     """
     try:
         datetime.strptime(date, "%Y-%m-%d")
@@ -168,11 +185,136 @@ def create_new_schedule(
             description=description,
             start_time=_to_timestamptz(date, start_time),
             end_time=_to_timestamptz(date, end_time),
+            status=status,
         )
     except Exception as exc:
         return f"Gagal menyimpan jadwal: {exc}"
 
     return (
         f"Jadwal '{title}' berhasil disimpan pada {date} "
-        f"pukul {start_time}-{end_time}."
+        f"pukul {start_time}-{end_time} dengan status '{status}'."
     )
+
+
+def update_existing_schedule(
+    schedule_id: str,
+    title: str = "",
+    description: str = "",
+    date: str = "",
+    start_time: str = "",
+    end_time: str = "",
+    status: str = "",
+) -> str:
+    """Memperbarui informasi jadwal (status, waktu, judul, deskripsi) berdasarkan ID.
+
+    Args:
+        schedule_id: UUID jadwal yang ingin diperbarui.
+        title: Judul baru (opsional).
+        description: Deskripsi baru (opsional).
+        date: Tanggal baru YYYY-MM-DD (opsional).
+        start_time: Jam mulai baru HH:MM (opsional).
+        end_time: Jam selesai baru HH:MM (opsional).
+        status: Status baru: 'active' (aktifkan), 'inactive' (nonaktifkan), 'completed' (selesai).
+    """
+    current = database.get_schedule_by_id(schedule_id)
+    if not current:
+        return f"Jadwal dengan ID {schedule_id} tidak ditemukan."
+
+    updates: dict[str, Any] = {}
+    if title:
+        updates["title"] = title
+    if description:
+        updates["description"] = description
+    if status:
+        updates["status"] = status.lower()
+
+    # Hitung start_time dan end_time jika ada perubahan waktu/tanggal
+    curr_date = _format_date(current["start_time"])
+    curr_start = _format_time(current["start_time"])
+    curr_end = _format_time(current["end_time"])
+
+    target_date = date if date else curr_date
+    target_start = start_time if start_time else curr_start
+    target_end = end_time if end_time else curr_end
+
+    if date or start_time:
+        updates["start_time"] = _to_timestamptz(target_date, target_start)
+    if date or end_time:
+        updates["end_time"] = _to_timestamptz(target_date, target_end)
+
+    try:
+        res = database.update_schedule(schedule_id, updates)
+        if not res:
+            return f"Gagal memperbarui jadwal {schedule_id}."
+        return f"Jadwal '{res.get('title')}' berhasil diperbarui! Status saat ini: '{res.get('status')}'."
+    except Exception as exc:
+        return f"Terjadi kesalahan saat update jadwal: {exc}"
+
+
+def delete_existing_schedule(schedule_id: str) -> str:
+    """Menghapus jadwal berdasarkan ID dari database.
+
+    Args:
+        schedule_id: UUID jadwal yang ingin dihapus.
+    """
+    current = database.get_schedule_by_id(schedule_id)
+    if not current:
+        return f"Jadwal dengan ID {schedule_id} tidak ditemukan."
+
+    try:
+        database.delete_schedule(schedule_id)
+        return f"Jadwal '{current.get('title')}' (ID: {schedule_id}) berhasil dihapus."
+    except Exception as exc:
+        return f"Gagal menghapus jadwal: {exc}"
+
+
+def manage_schedule_by_title(
+    title_keyword: str,
+    action: str,
+    new_status: str = "",
+    new_date: str = "",
+    new_start_time: str = "",
+    new_end_time: str = "",
+    new_title: str = "",
+) -> str:
+    """Mengelola jadwal berdasarkan pencarian judul (tanpa harus tahu ID jadwal).
+
+    Args:
+        title_keyword: Kata kunci judul jadwal yang dicari (contoh: "belajar python", "rapat").
+        action: Aksi yang diinginkan: 'activate' (aktifkan), 'deactivate' (nonaktifkan),
+                'complete' (tandai selesai), 'delete' (hapus), 'update' (ubah waktu/judul).
+        new_status: Status baru jika action='update'.
+        new_date: Tanggal baru YYYY-MM-DD jika diubah.
+        new_start_time: Jam mulai baru HH:MM jika diubah.
+        new_end_time: Jam selesai baru HH:MM jika diubah.
+        new_title: Judul baru jika diubah.
+    """
+    user_id = resolve_user_id()
+    matches = database.search_schedules(user_id, title_keyword)
+    if not matches:
+        return f"Tidak ditemukan jadwal yang cocok dengan '{title_keyword}'."
+
+    target = matches[0]
+    schedule_id = str(target["id"])
+    target_title = target.get("title")
+
+    action = action.lower().strip()
+    if action == "delete":
+        return delete_existing_schedule(schedule_id)
+    elif action == "activate":
+        return update_existing_schedule(schedule_id, status="active")
+    elif action == "deactivate":
+        return update_existing_schedule(schedule_id, status="inactive")
+    elif action == "complete":
+        return update_existing_schedule(schedule_id, status="completed")
+    elif action == "update":
+        return update_existing_schedule(
+            schedule_id=schedule_id,
+            title=new_title,
+            date=new_date,
+            start_time=new_start_time,
+            end_time=new_end_time,
+            status=new_status,
+        )
+    else:
+        return f"Aksi '{action}' tidak dikenali. Pilih antara: activate, deactivate, complete, delete, update."

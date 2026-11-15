@@ -7,7 +7,9 @@ export default function ScheduleCard({ schedule, onDelete }) {
   const formatDate = (dateStr) => {
     if (!dateStr) return '';
     try {
-      const parts = dateStr.split('-');
+      // Dukung format tanggal saja (YYYY-MM-DD) maupun timestamptz penuh
+      const datePart = String(dateStr).split('T')[0];
+      const parts = datePart.split('-');
       if (parts.length === 3) {
         const d = new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2]));
         return d.toLocaleDateString('id-ID', {
@@ -114,7 +116,9 @@ export default function ScheduleCard({ schedule, onDelete }) {
           <div className="flex flex-wrap items-center gap-y-1 gap-x-3 text-xs text-slate-500 mt-1">
             <div className="inline-flex items-center gap-1.5 font-medium text-slate-700 bg-slate-50 px-2 py-0.5 rounded border border-slate-200/60">
               <Calendar className="w-3.5 h-3.5 text-sky-600" />
-              <span>{formatDate(schedule.schedule_date)}</span>
+              <span>
+                {formatDate(schedule.schedule_date || schedule.start_time)}
+              </span>
             </div>
             <div className="inline-flex items-center gap-1.5 font-medium text-slate-700 bg-slate-50 px-2 py-0.5 rounded border border-slate-200/60">
               <Clock className="w-3.5 h-3.5 text-blue-600" />
