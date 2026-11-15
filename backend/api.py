@@ -13,6 +13,7 @@ load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
 from src import database
 from src.agent import TempoAgent
+from src.tools import resolve_user_id
 
 app = FastAPI(
     title="TempoAgent API",
@@ -87,7 +88,7 @@ def get_schedules():
     Mengambil daftar seluruh jadwal mendatang dari Supabase.
     """
     try:
-        schedules = database.get_all_upcoming_schedules()
+        schedules = database.get_all_upcoming_schedules(resolve_user_id())
         return {"schedules": schedules}
     except Exception as exc:
         raise HTTPException(

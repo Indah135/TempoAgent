@@ -13,9 +13,10 @@ import {
   CheckCircle2,
   Clock,
   ShieldCheck,
+  ShieldAlert,
 } from 'lucide-react';
 
-export default function Auth() {
+export default function Auth({ unauthorizedError }) {
   const [mode, setMode] = useState('login'); // 'login' | 'register'
   const [fullName, setFullName] = useState('');
   const [email, setEmail] = useState('');
@@ -59,7 +60,6 @@ export default function Auth() {
     try {
       if (mode === 'register') {
         // Registrasi user baru menggunakan supabase.auth.signUp
-        // Data full_name dikirimkan di options.data agar trigger "Profiles" otomatis terisi
         const { data, error } = await supabase.auth.signUp({
           email: email.trim(),
           password,
@@ -72,11 +72,9 @@ export default function Auth() {
 
         if (error) throw error;
 
-        // Jika pendaftaran berhasil
         setSuccessMsg(
           'Akun berhasil dibuat! Silakan masuk menggunakan akun baru Anda.'
         );
-        // Arahkan user ke mode Login dan reset password input
         setMode('login');
         setPassword('');
       } else {
@@ -154,6 +152,17 @@ export default function Auth() {
             </button>
           </div>
 
+          {/* Unauthorized Alert if user tried to bypass via URL */}
+          {unauthorizedError && (
+            <div className="mb-5 p-3 rounded-xl bg-amber-50 border border-amber-200 text-amber-900 text-xs flex items-start gap-2.5 animate-in fade-in duration-200 shadow-2xs">
+              <ShieldAlert className="w-4 h-4 shrink-0 text-amber-600 mt-0.5" />
+              <div className="leading-relaxed">
+                <span className="font-bold block text-amber-800 mb-0.5">Akses Ditolak (401 Unauthorized)</span>
+                <span>{unauthorizedError}</span>
+              </div>
+            </div>
+          )}
+
           {/* Alert Messages */}
           {errorMsg && (
             <div className="mb-5 p-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-xs flex items-start gap-2.5 animate-in fade-in duration-200">
@@ -182,7 +191,7 @@ export default function Auth() {
                   <input
                     type="text"
                     required
-                    placeholder="Contoh: Indah Amiati"
+                    placeholder="Contoh: Budi Santoso"
                     value={fullName}
                     onChange={(e) => setFullName(e.target.value)}
                     className="w-full pl-10 pr-3.5 py-2.5 text-xs sm:text-sm rounded-xl border border-slate-200 bg-slate-50/50 focus:bg-white focus:outline-none focus:ring-2 focus:ring-sky-500/20 focus:border-sky-500 transition-all text-slate-800 placeholder-slate-400"

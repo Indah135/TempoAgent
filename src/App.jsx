@@ -12,6 +12,7 @@ export default function App() {
   const [session, setSession] = useState(null);
   const [user, setUser] = useState(null);
   const [authLoading, setAuthLoading] = useState(isSupabaseConfigured);
+  const [unauthorizedError, setUnauthorizedError] = useState(null);
 
   const [messages, setMessages] = useState([]);
   const [schedules, setSchedules] = useState([]);
@@ -26,12 +27,10 @@ export default function App() {
       return;
     }
 
-    // Timeout pengaman agar layar loading tidak pernah menggantung (maksimal 2.5 detik)
     const timeout = setTimeout(() => {
       setAuthLoading(false);
     }, 2500);
 
-    // Ambil session yang tersimpan
     supabase.auth
       .getSession()
       .then(({ data: { session } }) => {
@@ -46,7 +45,6 @@ export default function App() {
         clearTimeout(timeout);
       });
 
-    // Pasang listener onAuthStateChange untuk mendeteksi login/logout secara real-time
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((_event, session) => {
@@ -62,7 +60,42 @@ export default function App() {
     };
   }, []);
 
-  // 2. Mengambil daftar jadwal dari backend FastAPI (Supabase)
+  // 2. Route Guard & Proteksi URL Otomatis
+  // Menjaga agar siapapun yang mencoba membuka URL /dashboard, /agenda, dll sebelum login
+  // otomatis ditolak, muncul error 401, dan URL dikembalikan ke /login
+  useEffect(() => {
+    if (authLoading) return;
+
+    const checkUrlAccess = () => {
+      const currentPath = window.location.pathname.toLowerCase();
+
+      if (!session) {
+        // Jika belum login, hanya rute root (/) dan (/login) yang diizinkan
+        if (currentPath !== '/' && currentPath !== '/login') {
+          setUnauthorizedError(
+            `Akses Ditolak: Anda mencoba membuka URL '${window.location.pathname}'. Halaman tersebut diproteksi dan memerlukan login terlebih dahulu.`
+          );
+          // Otomatis kembalikan URL address bar ke /login
+          window.history.replaceState(null, '', '/login');
+        }
+      } else {
+        // Jika sudah login, bersihkan error unauthorized dan arahkan rute ke /dashboard
+        setUnauthorizedError(null);
+        if (currentPath === '/' || currentPath === '/login') {
+          window.history.replaceState(null, '', '/dashboard');
+        }
+      }
+    };
+
+    // Jalankan pengecekan URL saat pertama kali status auth didapat
+    checkUrlAccess();
+
+    // Pantau juga tombol Back/Forward browser
+    window.addEventListener('popstate', checkUrlAccess);
+    return () => window.removeEventListener('popstate', checkUrlAccess);
+  }, [session, authLoading]);
+
+  // 3. Mengambil daftar jadwal dari backend FastAPI (Supabase)
   const loadSchedules = useCallback(async () => {
     if (!session) return;
     setIsLoadingSchedules(true);
@@ -105,7 +138,6 @@ export default function App() {
       ]);
     } finally {
       setIsSending(false);
-      // Sesuai requirement: Daftar jadwal otomatis ter-refresh setiap kali agent selesai membalas chat
       await loadSchedules();
     }
   };
@@ -129,10 +161,12 @@ export default function App() {
       await supabase.auth.signOut();
       setMessages([]);
       setSchedules([]);
+      // Arahkan kembali URL ke /login saat logout
+      window.history.replaceState(null, '', '/login');
     }
   };
 
-  // Jika konfigurasi Supabase belum dimasukkan di .env
+  // Jika konfigurasi Supabase belum dimasukkan
   if (!isSupabaseConfigured) {
     return <SetupSupabase />;
   }
@@ -151,9 +185,9 @@ export default function App() {
     );
   }
 
-  // Jika belum login, tampilkan halaman Login & Register
+  // Jika belum login, tampilkan halaman Login & Register beserta pesan Unauthorized jika mencoba bypass via URL
   if (!session) {
-    return <Auth />;
+    return <Auth unauthorizedError={unauthorizedError} />;
   }
 
   // Jika sudah login, tampilkan halaman utama aplikasi
