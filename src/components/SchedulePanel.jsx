@@ -22,82 +22,99 @@ export default function SchedulePanel({
     return titleMatch || descMatch || dateMatch;
   });
 
+  const glassPanel = {
+    background: 'rgba(255, 255, 255, 0.03)',
+    backdropFilter: 'blur(20px) saturate(180%)',
+    WebkitBackdropFilter: 'blur(20px) saturate(180%)',
+    border: '1px solid rgba(255, 255, 255, 0.12)',
+    boxShadow: '0 8px 32px 0 rgba(0, 0, 0, 0.25)',
+  };
+
   return (
-    <div className="bg-white rounded-2xl border border-slate-200/90 shadow-sm flex flex-col h-full overflow-hidden">
+    <div className="rounded-2xl flex flex-col h-full min-h-0 overflow-hidden" style={glassPanel}>
       {/* Panel Header */}
-      <div className="p-4 sm:p-5 border-b border-slate-100 bg-gradient-to-b from-slate-50/70 to-white flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+      <div
+        className="px-4 py-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shrink-0"
+        style={{ borderBottom: '1px solid rgba(255,255,255,0.07)' }}
+      >
         <div className="flex items-center gap-2.5">
-          <div className="w-8 h-8 rounded-lg bg-sky-100/80 text-sky-700 flex items-center justify-center font-bold">
-            <CalendarDays className="w-4 h-4" />
+          <div
+            className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0"
+            style={{ background: 'rgba(139,92,246,0.25)' }}
+          >
+            <CalendarDays className="w-4 h-4 text-purple-300" />
           </div>
           <div>
             <div className="flex items-center gap-2">
-              <h2 className="font-bold text-slate-800 text-base">
-                Agenda & Jadwal Aktif
-              </h2>
-              <span className="px-2 py-0.5 rounded-full text-xs font-semibold bg-sky-100 text-sky-800">
+              <h2 className="font-bold text-white text-sm">Agenda & Jadwal Aktif</h2>
+              <span
+                className="px-2 py-0.5 rounded-full text-xs font-semibold text-purple-300"
+                style={{ background: 'rgba(139,92,246,0.2)' }}
+              >
                 {schedules.length}
               </span>
             </div>
-            <p className="text-xs text-slate-500">
-              Sinkronisasi real-time dengan Supabase
-            </p>
+            <p className="text-[11px] text-white/40">Sinkronisasi real-time dengan Supabase</p>
           </div>
         </div>
 
-        {/* Action Buttons: Refresh & Search */}
         <div className="flex items-center gap-2">
-          <div className="relative flex-1 sm:w-48">
-            <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
+          <div className="relative flex-1 sm:w-44">
+            <Search className="w-3.5 h-3.5 text-white/30 absolute left-2.5 top-1/2 -translate-y-1/2" />
             <input
               type="text"
               placeholder="Cari jadwal..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full pl-8 pr-3 py-1.5 text-xs rounded-lg border border-slate-200 bg-slate-50 focus:bg-white focus:outline-none focus:ring-2 focus:ring-sky-500/20 focus:border-sky-500 transition-all"
+              className="w-full pl-8 pr-3 py-1.5 text-xs rounded-lg text-white placeholder-white/25 focus:outline-none focus:ring-1 transition-all"
+              style={{
+                background: 'rgba(255,255,255,0.07)',
+                border: '1px solid rgba(255,255,255,0.1)',
+              }}
             />
           </div>
-
           <button
             type="button"
             onClick={onRefresh}
             disabled={isLoading}
             title="Muat ulang jadwal"
-            className="p-1.5 rounded-lg border border-slate-200 text-slate-600 hover:text-sky-600 hover:bg-sky-50 transition-colors disabled:opacity-50 shrink-0"
+            className="p-1.5 rounded-lg text-white/40 hover:text-purple-300 transition-colors disabled:opacity-50 shrink-0"
+            style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.08)' }}
           >
-            <RefreshCw
-              className={`w-4 h-4 ${isLoading ? 'animate-spin text-sky-600' : ''}`}
-            />
+            <RefreshCw className={`w-4 h-4 ${isLoading ? 'animate-spin text-purple-400' : ''}`} />
           </button>
         </div>
       </div>
 
-      {/* Content Area */}
-      <div className="p-4 sm:p-5 flex-1 overflow-y-auto space-y-3 bg-slate-50/40">
+      {/* Content Area - Scrollable */}
+      <div className="p-4 flex-1 min-h-0 overflow-y-auto space-y-3" style={{ background: 'rgba(0,0,0,0.1)' }}>
         {error && (
-          <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-xs flex items-center justify-between gap-2">
-            <div className="flex items-center gap-2">
-              <AlertCircle className="w-4 h-4 shrink-0 text-rose-500" />
+          <div
+            className="p-3 rounded-xl text-xs flex items-center justify-between gap-2"
+            style={{ background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.2)' }}
+          >
+            <div className="flex items-center gap-2 text-red-300">
+              <AlertCircle className="w-4 h-4 shrink-0" />
               <span>{error}</span>
             </div>
-            <button
-              onClick={onRefresh}
-              className="underline font-semibold hover:text-rose-900"
-            >
+            <button onClick={onRefresh} className="underline font-semibold text-red-300 hover:text-red-200">
               Coba lagi
             </button>
           </div>
         )}
 
         {isLoading && schedules.length === 0 ? (
-          <div className="py-12 flex flex-col items-center justify-center text-slate-400 gap-3">
-            <div className="w-8 h-8 border-3 border-sky-500 border-t-transparent rounded-full animate-spin" />
-            <p className="text-xs">Memuat daftar jadwal...</p>
+          <div className="py-12 flex flex-col items-center justify-center gap-3">
+            <div
+              className="w-8 h-8 border-2 border-t-transparent rounded-full animate-spin"
+              style={{ borderColor: 'rgba(139,92,246,0.5)', borderTopColor: 'transparent' }}
+            />
+            <p className="text-xs text-white/40">Memuat daftar jadwal...</p>
           </div>
         ) : filteredSchedules.length === 0 ? (
           searchQuery ? (
-            <div className="py-10 text-center text-slate-500 text-xs">
-              Tidak ada jadwal yang cocok dengan kata kunci "{searchQuery}".
+            <div className="py-10 text-center text-white/30 text-xs">
+              Tidak ada jadwal yang cocok dengan "{searchQuery}".
             </div>
           ) : (
             <EmptyState onQuickPrompt={onQuickPrompt} />
@@ -109,10 +126,13 @@ export default function SchedulePanel({
         )}
       </div>
 
-      {/* Footer Info */}
-      <div className="px-4 py-2.5 border-t border-slate-100 bg-white text-[11px] text-slate-500 flex items-center justify-between">
-        <span>Menampilkan {filteredSchedules.length} dari {schedules.length} jadwal mendatang</span>
-        <span className="text-slate-400">Jadwal otomatis ter-refresh saat AI menjawab</span>
+      {/* Footer */}
+      <div
+        className="px-4 py-2.5 text-[11px] flex items-center justify-between shrink-0"
+        style={{ borderTop: '1px solid rgba(255,255,255,0.06)', color: 'rgba(255,255,255,0.3)', background: 'rgba(18,8,34,0.4)' }}
+      >
+        <span>Menampilkan {filteredSchedules.length} dari {schedules.length} jadwal</span>
+        <span>Auto-refresh saat AI menjawab</span>
       </div>
     </div>
   );

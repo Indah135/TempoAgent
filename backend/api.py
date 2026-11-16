@@ -1,20 +1,25 @@
 import os
 from typing import Any, List
-from fastapi import FastAPI, HTTPException, status
+from fastapi import FastAPI, HTTPException, status, File, UploadFile, Form
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from pathlib import Path
 from dotenv import load_dotenv
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 
 # Cek file .env di backend/ maupun di folder utama (root)
 load_dotenv(Path(__file__).resolve().parent / ".env")
 load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
 
-from src import database
+from src import database, extractor
 from src.agent import TempoAgent
-from src.tools import resolve_user_id
+from src.tools import (
+    get_tz_hours,
+    get_tz_offset,
+    resolve_timezone,
+    resolve_user_id,
+)
 
 app = FastAPI(
     title="TempoAgent API",
@@ -44,6 +49,9 @@ def get_agent() -> TempoAgent:
 
 class ChatRequest(BaseModel):
     message: str
+    # Zona waktu pengguna: "WIB" / "WITA" / "WIT" (atau nama IANA).
+    # Jika kosong, backend membaca dari tabel Profiles (fallback WIB).
+    timezone: str | None = None
 
 
 class ChatResponse(BaseModel):
@@ -58,6 +66,7 @@ class UpdateScheduleRequest(BaseModel):
     end_time: str | None = None
     status: str | None = None
     priority: str | None = None
+    timezone: str | None = None
 
 
 @app.get("/")
@@ -84,7 +93,11 @@ def chat_with_agent(payload: ChatRequest):
 
     try:
         agent = get_agent()
-        reply_text = agent.send_message(user_message)
+        reply_text = agent.send_message(
+            user_message,
+            timezone_name=payload.timezone,
+            timezone=payload.timezone,
+        )
         return ChatResponse(reply=reply_text)
     except Exception as exc:
         return ChatResponse(
@@ -92,13 +105,126 @@ def chat_with_agent(payload: ChatRequest):
         )
 
 
-@app.get("/api/schedules")
-def get_schedules():
+DAY_NAME_TO_INT = {
+    "senin": 0, "monday": 0,
+    "selasa": 1, "tuesday": 1,
+    "rabu": 2, "wednesday": 2,
+    "kamis": 3, "thursday": 3,
+    "jumat": 4, "jum'at": 4, "friday": 4,
+    "sabtu": 5, "saturday": 5,
+    "minggu": 6, "ahad": 6, "sunday": 6,
+}
+
+
+def _day_to_nearest_date(day_name: str, tz_hours: int) -> str:
+    """Mengonversi nama hari (misal 'Senin') menjadi tanggal terdekat (YYYY-MM-DD)."""
+    now = datetime.now(timezone(timedelta(hours=tz_hours)))
+    today_date = now.date()
+    today_weekday = today_date.weekday()  # 0 = Senin, 6 = Minggu
+    target_weekday = DAY_NAME_TO_INT.get(day_name.lower().strip(), today_weekday)
+    diff = (target_weekday - today_weekday) % 7
+    target_date = today_date + timedelta(days=diff)
+    return target_date.strftime("%Y-%m-%d")
+
+
+def _normalize_time_str(time_str: str | None, default: str) -> str:
+    if not time_str:
+        return default
+    clean = str(time_str).strip()
+    if len(clean) == 4 and clean[1] == ":":
+        clean = "0" + clean
+    if len(clean) >= 5 and clean[2] == ":":
+        return clean[:5]
+    return default
+
+
+@app.post("/api/upload-schedule")
+async def upload_schedule_file(
+    file: UploadFile = File(...),
+    timezone_name: str | None = Form(None),
+):
     """
-    Mengambil daftar seluruh jadwal mendatang dari Supabase.
+    Ekstraksi jadwal dari foto (JPG/PNG/WEBP) atau dokumen (PDF/Excel/CSV)
+    menggunakan Groq (hybrid vision/text). Mengonversi nama hari menjadi tanggal
+    terdekat dan menyimpannya ke Supabase dengan workspace = 'Jadwal Kuliah'.
     """
     try:
-        schedules = database.get_all_upcoming_schedules(resolve_user_id())
+        file_bytes = await file.read()
+        filename = file.filename or "uploaded_schedule"
+
+        extracted_items = extractor.extract_schedule_from_file(file_bytes, filename)
+        if not extracted_items:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Tidak ada jadwal yang berhasil dideteksi dari file yang diunggah.",
+            )
+
+        resolve_timezone(timezone_name)
+        tz_offset = get_tz_offset()
+        tz_hours = get_tz_hours()
+        user_id = resolve_user_id()
+
+        saved_schedules = []
+        for item in extracted_items:
+            day_str = item.get("day", "Senin")
+            target_date = _day_to_nearest_date(day_str, tz_hours)
+
+            start_time = _normalize_time_str(item.get("start_time"), "08:00")
+            end_time = _normalize_time_str(item.get("end_time"), "10:00")
+
+            start_iso = f"{target_date}T{start_time}:00{tz_offset}"
+            end_iso = f"{target_date}T{end_time}:00{tz_offset}"
+
+            inserted = database.insert_schedule(
+                user_id=user_id,
+                title=item.get("title", "Jadwal"),
+                description=item.get("description", ""),
+                start_time=start_iso,
+                end_time=end_iso,
+                status="active",
+                priority="medium",
+                workspace="Jadwal Kuliah",
+            )
+            if inserted:
+                saved_schedules.append(inserted)
+
+        return {
+            "success": True,
+            "count": len(saved_schedules),
+            "filename": filename,
+            "workspace": "Jadwal Kuliah",
+            "schedules": saved_schedules,
+            "extracted_items": extracted_items,
+            "message": f"Berhasil mengekstrak dan menyimpan {len(saved_schedules)} jadwal ke 'Jadwal Kuliah'.",
+        }
+    except ValueError as ve:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(ve),
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Terjadi kesalahan saat memproses file jadwal: {str(exc)}",
+        )
+
+
+
+@app.get("/api/schedules")
+def get_schedules(timezone_name: str | None = None):
+    """
+    Mengambil daftar seluruh jadwal mendatang dari Supabase.
+
+    Query `timezone` (opsional): "WIB" / "WITA" / "WIT" untuk menentukan
+    batas "hari ini" sesuai zona waktu pengguna.
+    """
+    try:
+        resolve_timezone(timezone_name)
+        schedules = database.get_all_upcoming_schedules(
+            resolve_user_id(), get_tz_offset()
+        )
         return {"schedules": schedules}
     except Exception as exc:
         raise HTTPException(
@@ -145,6 +271,11 @@ def edit_schedule(schedule_id: str, payload: UpdateScheduleRequest):
     if payload.priority is not None:
         updates["priority"] = payload.priority
 
+    # Zona waktu pengguna untuk menyusun ulang timestamp
+    resolve_timezone(payload.timezone)
+    tz_offset = get_tz_offset()
+    tz_hours = get_tz_hours()
+
     curr_start = str(current.get("start_time", ""))
     curr_end = str(current.get("end_time", ""))
 
@@ -152,25 +283,27 @@ def edit_schedule(schedule_id: str, payload: UpdateScheduleRequest):
     if not date_part and "T" in curr_start:
         date_part = curr_start.split("T")[0]
     elif not date_part:
-        date_part = datetime.now().strftime("%Y-%m-%d")
+        date_part = datetime.now(
+            timezone(timedelta(hours=tz_hours))
+        ).strftime("%Y-%m-%d")
 
     if payload.start_time:
         if "T" not in payload.start_time:
-            updates["start_time"] = f"{date_part}T{payload.start_time[:5]}:00+07:00"
+            updates["start_time"] = f"{date_part}T{payload.start_time[:5]}:00{tz_offset}"
         else:
             updates["start_time"] = payload.start_time
     elif payload.schedule_date and "T" in curr_start:
         time_part = curr_start.split("T")[1][:8]
-        updates["start_time"] = f"{date_part}T{time_part}+07:00"
+        updates["start_time"] = f"{date_part}T{time_part}{tz_offset}"
 
     if payload.end_time:
         if "T" not in payload.end_time:
-            updates["end_time"] = f"{date_part}T{payload.end_time[:5]}:00+07:00"
+            updates["end_time"] = f"{date_part}T{payload.end_time[:5]}:00{tz_offset}"
         else:
             updates["end_time"] = payload.end_time
     elif payload.schedule_date and "T" in curr_end:
         time_part = curr_end.split("T")[1][:8]
-        updates["end_time"] = f"{date_part}T{time_part}+07:00"
+        updates["end_time"] = f"{date_part}T{time_part}{tz_offset}"
 
     try:
         updated = database.update_schedule(schedule_id, updates)

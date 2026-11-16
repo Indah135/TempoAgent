@@ -1,5 +1,7 @@
 import os
-from datetime import datetime
+import time
+from contextvars import ContextVar
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from . import database
@@ -20,8 +22,109 @@ _BULAN = [
     "Desember",
 ]
 
-_TZ_OFFSET = "+07:00"
 _USER_ID_CACHE: str | None = None
+
+# Peta zona waktu Indonesia: label -> (offset ISO8601, jam)
+TZ_OFFSETS: dict[str, tuple[str, int]] = {
+    "WIB": ("+07:00", 7),
+    "WITA": ("+08:00", 8),
+    "WIT": ("+09:00", 9),
+}
+DEFAULT_TIMEZONE = "WIB"
+
+# Alias yang diterima (label, nama IANA, maupun offset) -> label resmi
+_TZ_ALIASES: dict[str, str] = {
+    "wib": "WIB",
+    "asia/jakarta": "WIB",
+    "asia/pontianak": "WIB",
+    "utc+7": "WIB",
+    "gmt+7": "WIB",
+    "+07:00": "WIB",
+    "wita": "WITA",
+    "asia/makassar": "WITA",
+    "utc+8": "WITA",
+    "gmt+8": "WITA",
+    "+08:00": "WITA",
+    "wit": "WIT",
+    "asia/jayapura": "WIT",
+    "asia/meraure": "WIT",
+    "utc+9": "WIT",
+    "gmt+9": "WIT",
+    "+09:00": "WIT",
+}
+
+# Zona waktu aktif untuk request/percakapan yang sedang berjalan
+_TZ_CTX: ContextVar[str] = ContextVar("tempo_timezone", default=DEFAULT_TIMEZONE)
+_PROFILE_TZ_CACHE: dict[str, Any] = {"value": None, "at": 0.0}
+_PROFILE_TZ_TTL = 60.0
+
+
+def normalize_timezone(value: Any) -> str:
+    """Petakan berbagai bentuk nama zona waktu ke label WIB / WITA / WIT."""
+    if value is None:
+        return DEFAULT_TIMEZONE
+    text = str(value).strip()
+    if not text:
+        return DEFAULT_TIMEZONE
+    if text.upper() in TZ_OFFSETS:
+        return text.upper()
+    return _TZ_ALIASES.get(text.lower(), DEFAULT_TIMEZONE)
+
+
+def _profile_timezone() -> str:
+    """Baca zona waktu dari tabel Profiles (di-cache singkat). Gagal -> default."""
+    now = time.monotonic()
+    cached = _PROFILE_TZ_CACHE["value"]
+    if cached is not None and now - _PROFILE_TZ_CACHE["at"] < _PROFILE_TZ_TTL:
+        return str(cached)
+
+    result = DEFAULT_TIMEZONE
+    try:
+        rows: list[dict[str, Any]] = (
+            database.client.table("Profiles")
+            .select("timezone")
+            .eq("id", resolve_user_id())
+            .limit(1)
+            .execute()
+            .data
+            or []
+        )
+        if rows and rows[0].get("timezone"):
+            result = normalize_timezone(rows[0]["timezone"])
+    except Exception:
+        result = DEFAULT_TIMEZONE
+
+    _PROFILE_TZ_CACHE["value"] = result
+    _PROFILE_TZ_CACHE["at"] = now
+    return result
+
+
+def resolve_timezone(value: Any = None) -> str:
+    """Tentukan zona waktu request saat ini lalu simpan ke contextvar.
+
+    Jika `value` kosong, ambil dari tabel Profiles (fallback: WIB).
+    """
+    if value is not None and str(value).strip():
+        tz = normalize_timezone(value)
+    else:
+        tz = _profile_timezone()
+    _TZ_CTX.set(tz)
+    return tz
+
+
+def get_timezone() -> str:
+    """Zona waktu yang berlaku untuk request/percakapan ini."""
+    return _TZ_CTX.get()
+
+
+def get_tz_offset() -> str:
+    """Offset ISO8601 zona waktu aktif, contoh '+08:00'."""
+    return TZ_OFFSETS[get_timezone()][0]
+
+
+def get_tz_hours() -> int:
+    """Jam offset zona waktu aktif, contoh 8."""
+    return TZ_OFFSETS[get_timezone()][1]
 
 
 def resolve_user_id() -> str:
@@ -55,12 +158,12 @@ def resolve_user_id() -> str:
 
 
 def _to_timestamptz(date: str, time: str) -> str:
-    """Gabungkan YYYY-MM-DD dan HH:MM menjadi timestamptz (+07:00)."""
-    return f"{date}T{time}:00{_TZ_OFFSET}"
+    """Gabungkan YYYY-MM-DD dan HH:MM menjadi timestamptz sesuai zona waktu aktif."""
+    return f"{date}T{time}:00{get_tz_offset()}"
 
 
 def _format_time(value: Any) -> str:
-    """Ambil bagian HH:MM dari kolom time/timestamptz."""
+    """Ambil bagian HH:MM dari kolom time/timestamptz (konversi ke zona waktu aktif)."""
     text = str(value)
     if "T" not in text:
         return text[:5]
@@ -68,19 +171,25 @@ def _format_time(value: Any) -> str:
         parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
         if parsed.tzinfo is None:
             return text.split("T", 1)[1][:5]
-        from datetime import timezone, timedelta
-
-        return parsed.astimezone(timezone(timedelta(hours=7))).strftime("%H:%M")
+        target = timezone(timedelta(hours=get_tz_hours()))
+        return parsed.astimezone(target).strftime("%H:%M")
     except Exception:
         return text.split("T", 1)[1][:5]
 
 
 def _format_date(value: Any) -> str:
-    """Ambil bagian YYYY-MM-DD dari kolom timestamptz."""
+    """Ambil bagian YYYY-MM-DD dari kolom timestamptz (konversi ke zona waktu aktif)."""
     text = str(value)
-    if "T" in text:
+    if "T" not in text:
+        return text[:10]
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            return text.split("T")[0]
+        target = timezone(timedelta(hours=get_tz_hours()))
+        return parsed.astimezone(target).strftime("%Y-%m-%d")
+    except Exception:
         return text.split("T")[0]
-    return text[:10]
 
 
 def check_availability(date: str) -> str:
@@ -97,7 +206,9 @@ def check_availability(date: str) -> str:
     except ValueError:
         return f"Format tanggal tidak valid: {date}. Gunakan format YYYY-MM-DD."
 
-    schedules = database.get_schedules_by_date(resolve_user_id(), date)
+    schedules = database.get_schedules_by_date(
+        resolve_user_id(), date, get_tz_offset()
+    )
     if not schedules:
         return f"Tidak ada jadwal pada {date}. Hari tersebut kosong."
 
@@ -127,7 +238,7 @@ def list_schedules(query: str = "") -> str:
     if query.strip():
         items = database.search_schedules(user_id, query.strip())
     else:
-        items = database.get_all_upcoming_schedules(user_id)
+        items = database.get_all_upcoming_schedules(user_id, get_tz_offset())
 
     if not items:
         if query:

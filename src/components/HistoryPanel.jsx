@@ -169,58 +169,83 @@ export default function HistoryPanel({
   ];
 
   return (
-    <div className="bg-white rounded-2xl border border-slate-200/90 shadow-sm flex flex-col h-full overflow-hidden">
+    <div
+      className="rounded-2xl flex flex-col h-full overflow-hidden"
+      style={{
+        background: 'rgba(255, 255, 255, 0.03)',
+        backdropFilter: 'blur(20px) saturate(180%)',
+        WebkitBackdropFilter: 'blur(20px) saturate(180%)',
+        border: '1px solid rgba(255, 255, 255, 0.12)',
+        boxShadow: '0 8px 32px 0 rgba(0, 0, 0, 0.25)',
+      }}
+    >
       {/* Panel Header */}
-      <div className="p-4 sm:p-5 border-b border-slate-100 bg-gradient-to-b from-slate-50/70 to-white flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+      <div
+        className="px-4 py-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3"
+        style={{ borderBottom: '1px solid rgba(255,255,255,0.07)' }}
+      >
         <div className="flex items-center gap-2.5">
-          <div className="w-8 h-8 rounded-lg bg-indigo-100/80 text-indigo-700 flex items-center justify-center font-bold">
-            <History className="w-4 h-4" />
+          <div
+            className="w-8 h-8 rounded-lg flex items-center justify-center"
+            style={{ background: 'rgba(139,92,246,0.25)' }}
+          >
+            <History className="w-4 h-4 text-purple-300" />
           </div>
           <div>
             <div className="flex items-center gap-2">
-              <h2 className="font-bold text-slate-800 text-base">
+              <h2 className="font-bold text-white text-sm">
                 Riwayat Tugas & Jadwal
               </h2>
-              <span className="px-2 py-0.5 rounded-full text-xs font-semibold bg-indigo-100 text-indigo-800">
+              <span
+                className="px-2 py-0.5 rounded-full text-xs font-semibold text-purple-300"
+                style={{ background: 'rgba(139,92,246,0.2)' }}
+              >
                 {filtered.length}
               </span>
             </div>
-            <p className="text-xs text-slate-500">
+            <p className="text-[11px] text-white/40">
               Tampilan per minggu dan per bulan
             </p>
           </div>
         </div>
 
-        {/* Action Buttons: Refresh & Search */}
         <div className="flex items-center gap-2">
           <div className="relative flex-1 sm:w-44">
-            <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
+            <Search className="w-3.5 h-3.5 text-white/30 absolute left-2.5 top-1/2 -translate-y-1/2" />
             <input
               type="text"
               placeholder="Cari tugas..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full pl-8 pr-3 py-1.5 text-xs rounded-lg border border-slate-200 bg-slate-50 focus:bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all"
+              className="w-full pl-8 pr-3 py-1.5 text-xs rounded-lg text-white placeholder-white/25 focus:outline-none focus:ring-1 transition-all"
+              style={{
+                background: 'rgba(255,255,255,0.07)',
+                border: '1px solid rgba(255,255,255,0.1)',
+              }}
             />
           </div>
-
           <button
             type="button"
             onClick={onRefresh}
             disabled={isLoading}
             title="Muat ulang riwayat"
-            className="p-1.5 rounded-lg border border-slate-200 text-slate-600 hover:text-indigo-600 hover:bg-indigo-50 transition-colors disabled:opacity-50 shrink-0"
+            className="p-1.5 rounded-lg text-white/40 hover:text-purple-300 transition-colors disabled:opacity-50 shrink-0"
+            style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.08)' }}
           >
-            <RefreshCw
-              className={`w-4 h-4 ${isLoading ? 'animate-spin text-indigo-600' : ''}`}
-            />
+            <RefreshCw className={`w-4 h-4 ${isLoading ? 'animate-spin text-purple-400' : ''}`} />
           </button>
         </div>
       </div>
 
-      {/* Filter Periode: Mingguan / Bulanan + Navigasi */}
-      <div className="px-4 sm:px-5 py-3 border-b border-slate-100 bg-white flex flex-wrap items-center justify-between gap-3">
-        <div className="flex items-center gap-1 p-1 bg-slate-100 rounded-xl">
+      {/* Filter Periode */}
+      <div
+        className="px-4 py-3 flex flex-wrap items-center justify-between gap-3"
+        style={{ borderBottom: '1px solid rgba(255,255,255,0.06)' }}
+      >
+        <div
+          className="flex items-center gap-1 p-1 rounded-xl"
+          style={{ background: 'rgba(255,255,255,0.05)' }}
+        >
           {tabs.map((tab) => (
             <button
               key={tab.id}
@@ -233,9 +258,10 @@ export default function HistoryPanel({
               }}
               className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all duration-150 ${
                 mode === tab.id
-                  ? 'bg-white text-indigo-700 shadow-xs border border-slate-200/70'
-                  : 'text-slate-500 hover:text-slate-700 border border-transparent'
+                  ? 'text-white'
+                  : 'text-white/40 hover:text-white/60'
               }`}
+              style={mode === tab.id ? { background: 'rgba(139,92,246,0.3)' } : {}}
             >
               {tab.label}
             </button>
@@ -248,7 +274,8 @@ export default function HistoryPanel({
               type="button"
               onClick={handlePrev}
               title="Minggu sebelumnya"
-              className="p-1.5 rounded-lg border border-slate-200 text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 transition-colors"
+              className="p-1.5 rounded-lg text-white/40 hover:text-purple-300 transition-colors"
+              style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.08)' }}
             >
               <ChevronLeft className="w-4 h-4" />
             </button>
@@ -257,7 +284,8 @@ export default function HistoryPanel({
               type="button"
               onClick={handleReset}
               title="Kembali ke minggu ini"
-              className="px-3 py-1.5 rounded-lg text-xs font-bold text-indigo-700 bg-indigo-50 border border-indigo-100 hover:bg-indigo-100 transition-colors min-w-[150px]"
+              className="px-3 py-1.5 rounded-lg text-xs font-bold text-purple-300 transition-colors min-w-[150px]"
+              style={{ background: 'rgba(139,92,246,0.15)', border: '1px solid rgba(139,92,246,0.25)' }}
             >
               {rangeLabel}
             </button>
@@ -266,19 +294,20 @@ export default function HistoryPanel({
               type="button"
               onClick={handleNext}
               title="Minggu berikutnya"
-              className="p-1.5 rounded-lg border border-slate-200 text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 transition-colors"
+              className="p-1.5 rounded-lg text-white/40 hover:text-purple-300 transition-colors"
+              style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.08)' }}
             >
               <ChevronRight className="w-4 h-4" />
             </button>
           </div>
         ) : (
-          /* Dropdown bulan (Januari–Desember) + tahun */
           <div className="flex items-center gap-2">
             <button
               type="button"
               onClick={handlePrev}
               title="Bulan sebelumnya"
-              className="p-1.5 rounded-lg border border-slate-200 text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 transition-colors"
+              className="p-1.5 rounded-lg text-white/40 hover:text-purple-300 transition-colors"
+              style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.08)' }}
             >
               <ChevronLeft className="w-4 h-4" />
             </button>
@@ -287,10 +316,11 @@ export default function HistoryPanel({
               value={selectedMonth}
               onChange={(e) => setSelectedMonth(Number(e.target.value))}
               aria-label="Pilih bulan"
-              className="px-2.5 py-1.5 rounded-lg text-xs font-bold text-indigo-700 bg-indigo-50 border border-indigo-100 hover:bg-indigo-100 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 cursor-pointer"
+              className="px-2.5 py-1.5 rounded-lg text-xs font-bold text-purple-300 cursor-pointer focus:outline-none"
+              style={{ background: 'rgba(139,92,246,0.15)', border: '1px solid rgba(139,92,246,0.25)' }}
             >
               {MONTH_NAMES.map((name, idx) => (
-                <option key={name} value={idx}>
+                <option key={name} value={idx} style={{ background: '#1e0a3c', color: '#e2e8f0' }}>
                   {name}
                 </option>
               ))}
@@ -300,10 +330,11 @@ export default function HistoryPanel({
               value={selectedYear}
               onChange={(e) => setSelectedYear(Number(e.target.value))}
               aria-label="Pilih tahun"
-              className="px-2.5 py-1.5 rounded-lg text-xs font-bold text-indigo-700 bg-indigo-50 border border-indigo-100 hover:bg-indigo-100 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 cursor-pointer"
+              className="px-2.5 py-1.5 rounded-lg text-xs font-bold text-purple-300 cursor-pointer focus:outline-none"
+              style={{ background: 'rgba(139,92,246,0.15)', border: '1px solid rgba(139,92,246,0.25)' }}
             >
               {yearOptions.map((y) => (
-                <option key={y} value={y}>
+                <option key={y} value={y} style={{ background: '#1e0a3c', color: '#e2e8f0' }}>
                   {y}
                 </option>
               ))}
@@ -313,7 +344,8 @@ export default function HistoryPanel({
               type="button"
               onClick={handleNext}
               title="Bulan berikutnya"
-              className="p-1.5 rounded-lg border border-slate-200 text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 transition-colors"
+              className="p-1.5 rounded-lg text-white/40 hover:text-purple-300 transition-colors"
+              style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.08)' }}
             >
               <ChevronRight className="w-4 h-4" />
             </button>
@@ -322,40 +354,49 @@ export default function HistoryPanel({
       </div>
 
       {/* Content Area */}
-      <div className="p-4 sm:p-5 flex-1 overflow-y-auto space-y-3 bg-slate-50/40">
+      <div className="p-4 flex-1 overflow-y-auto space-y-3" style={{ background: 'rgba(0,0,0,0.1)' }}>
         {error && (
-          <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-xs flex items-center justify-between gap-2">
-            <div className="flex items-center gap-2">
-              <AlertCircle className="w-4 h-4 shrink-0 text-rose-500" />
+          <div
+            className="p-3 rounded-xl text-xs flex items-center justify-between gap-2"
+            style={{ background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.2)' }}
+          >
+            <div className="flex items-center gap-2 text-red-300">
+              <AlertCircle className="w-4 h-4 shrink-0" />
               <span>{error}</span>
             </div>
-            <button
-              onClick={onRefresh}
-              className="underline font-semibold hover:text-rose-900"
-            >
+            <button onClick={onRefresh} className="underline font-semibold text-red-300 hover:text-red-200">
               Coba lagi
             </button>
           </div>
         )}
 
         {isLoading && schedules.length === 0 ? (
-          <div className="py-12 flex flex-col items-center justify-center text-slate-400 gap-3">
-            <div className="w-8 h-8 border-3 border-indigo-500 border-t-transparent rounded-full animate-spin" />
-            <p className="text-xs">Memuat riwayat tugas...</p>
+          <div className="py-12 flex flex-col items-center justify-center gap-3">
+            <div
+              className="w-8 h-8 border-2 border-t-transparent rounded-full animate-spin"
+              style={{ borderColor: 'rgba(139,92,246,0.5)', borderTopColor: 'transparent' }}
+            />
+            <p className="text-xs text-white/40">Memuat riwayat tugas...</p>
           </div>
         ) : filtered.length === 0 ? (
           searchQuery ? (
-            <div className="py-10 text-center text-slate-500 text-xs">
+            <div className="py-10 text-center text-white/30 text-xs">
               Tidak ada tugas yang cocok dengan kata kunci "{searchQuery}".
             </div>
           ) : schedules.length === 0 ? (
             <EmptyState onQuickPrompt={onQuickPrompt} />
           ) : (
-            <div className="py-10 text-center bg-white rounded-xl border border-dashed border-slate-300">
-              <p className="text-sm font-semibold text-slate-600 mb-1">
+            <div
+              className="py-10 text-center rounded-xl"
+              style={{
+                background: 'rgba(255,255,255,0.03)',
+                border: '1px dashed rgba(139,92,246,0.25)',
+              }}
+            >
+              <p className="text-sm font-semibold text-white/70 mb-1">
                 Tidak ada tugas pada periode ini
               </p>
-              <p className="text-xs text-slate-400">
+              <p className="text-xs text-white/30">
                 {mode === 'week'
                   ? 'Tidak ada jadwal pada minggu ini. Coba pindah minggu dengan tombol ‹ ›.'
                   : 'Tidak ada jadwal pada bulan ini. Pilih bulan lain di dropdown.'}
@@ -363,7 +404,7 @@ export default function HistoryPanel({
               <button
                 type="button"
                 onClick={handleReset}
-                className="mt-3 text-xs font-semibold text-indigo-600 hover:text-indigo-800 underline"
+                className="mt-3 text-xs font-semibold text-purple-400 hover:text-purple-300 underline"
               >
                 Kembali ke periode sekarang
               </button>
@@ -376,12 +417,13 @@ export default function HistoryPanel({
         )}
       </div>
 
-      {/* Footer Info */}
-      <div className="px-4 py-2.5 border-t border-slate-100 bg-white text-[11px] text-slate-500 flex items-center justify-between">
-        <span>
-          Menampilkan {filtered.length} dari {schedules.length} total jadwal
-        </span>
-        <span className="text-slate-400">Periode: {rangeLabel}</span>
+      {/* Footer */}
+      <div
+        className="px-4 py-2.5 text-[11px] flex items-center justify-between"
+        style={{ borderTop: '1px solid rgba(255,255,255,0.06)', color: 'rgba(255,255,255,0.3)' }}
+      >
+        <span>Menampilkan {filtered.length} dari {schedules.length} total jadwal</span>
+        <span>Periode: {rangeLabel}</span>
       </div>
     </div>
   );

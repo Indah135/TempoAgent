@@ -32,39 +32,50 @@ export default function SetupSupabase() {
     saveManualSupabaseConfig(cleanUrl, cleanKey);
   };
 
+  const inputStyle = {
+    background: 'rgba(255,255,255,0.07)',
+    border: '1px solid rgba(255,255,255,0.1)',
+  };
+
   return (
-    <div className="min-h-screen bg-gradient-to-br from-sky-50 via-slate-50 to-blue-50/40 flex flex-col justify-center items-center p-4 sm:p-6 font-sans">
-      <div className="max-w-lg w-full bg-white rounded-2xl border border-slate-200/90 shadow-xl p-6 sm:p-8 relative overflow-hidden">
-        {/* Top decorative bar */}
-        <div className="absolute top-0 left-0 right-0 h-1.5 bg-gradient-to-r from-sky-500 via-blue-500 to-amber-400" />
+    <div className="min-h-screen bg-app flex flex-col justify-center items-center p-4 sm:p-6 font-sans">
+      <div className="glass-window max-w-lg w-full rounded-[26px] p-6 sm:p-8 relative overflow-hidden">
+        {/* Top bar */}
+        <div className="absolute top-0 left-0 right-0 h-1" style={{ background: 'linear-gradient(90deg, #7c3aed, #9333ea, #c084fc)' }} />
 
         {/* Header */}
         <div className="flex items-center gap-3.5 mb-5">
-          <div className="w-12 h-12 rounded-xl bg-sky-50 border border-sky-200/80 flex items-center justify-center text-sky-600 shrink-0 shadow-inner">
+          <div
+            className="w-12 h-12 rounded-xl flex items-center justify-center text-purple-300 shrink-0"
+            style={{ background: 'rgba(139,92,246,0.2)' }}
+          >
             <Database className="w-6 h-6" />
           </div>
           <div>
-            <h2 className="text-lg font-bold text-slate-800">
+            <h2 className="text-lg font-bold text-white">
               Sambungkan Proyek Supabase
             </h2>
-            <p className="text-xs text-slate-500">
+            <p className="text-xs text-white/40">
               Masukkan URL dan Anon Key Supabase Anda untuk mengaktifkan Login & Database.
             </p>
           </div>
         </div>
 
-        {/* Direct Input Form */}
+        {/* Form */}
         <form onSubmit={handleSave} className="space-y-4">
           {error && (
-            <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-xs flex items-center gap-2">
-              <AlertTriangle className="w-4 h-4 shrink-0 text-rose-500" />
-              <span>{error}</span>
+            <div
+              className="p-3 rounded-xl text-xs flex items-center gap-2"
+              style={{ background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.2)' }}
+            >
+              <AlertTriangle className="w-4 h-4 shrink-0 text-red-400" />
+              <span className="text-red-300">{error}</span>
             </div>
           )}
 
           <div>
-            <label className="block text-xs font-semibold text-slate-700 mb-1.5 flex items-center gap-1.5">
-              <Globe className="w-3.5 h-3.5 text-sky-600" />
+            <label className="block text-xs font-semibold text-white/60 mb-1.5 flex items-center gap-1.5">
+              <Globe className="w-3.5 h-3.5 text-purple-400" />
               <span>Supabase Project URL</span>
             </label>
             <input
@@ -73,13 +84,14 @@ export default function SetupSupabase() {
               placeholder="https://xxxxxxxxxxxx.supabase.co"
               value={inputUrl}
               onChange={(e) => setInputUrl(e.target.value)}
-              className="w-full px-3.5 py-2.5 text-xs sm:text-sm rounded-xl border border-slate-200 bg-slate-50/50 focus:bg-white focus:outline-none focus:ring-2 focus:ring-sky-500/20 focus:border-sky-500 transition-all font-mono text-slate-800"
+              className="w-full px-3.5 py-2.5 text-xs sm:text-sm rounded-xl text-white placeholder-white/25 focus:outline-none focus:ring-1 focus:ring-purple-500/50 transition-all font-mono"
+              style={inputStyle}
             />
           </div>
 
           <div>
-            <label className="block text-xs font-semibold text-slate-700 mb-1.5 flex items-center gap-1.5">
-              <Key className="w-3.5 h-3.5 text-amber-500" />
+            <label className="block text-xs font-semibold text-white/60 mb-1.5 flex items-center gap-1.5">
+              <Key className="w-3.5 h-3.5 text-amber-400" />
               <span>Supabase Anon / Public Key</span>
             </label>
             <input
@@ -88,13 +100,15 @@ export default function SetupSupabase() {
               placeholder="sb_publishable_... atau eyJhbGci..."
               value={inputKey}
               onChange={(e) => setInputKey(e.target.value)}
-              className="w-full px-3.5 py-2.5 text-xs sm:text-sm rounded-xl border border-slate-200 bg-slate-50/50 focus:bg-white focus:outline-none focus:ring-2 focus:ring-sky-500/20 focus:border-sky-500 transition-all font-mono text-slate-800"
+              className="w-full px-3.5 py-2.5 text-xs sm:text-sm rounded-xl text-white placeholder-white/25 focus:outline-none focus:ring-1 focus:ring-purple-500/50 transition-all font-mono"
+              style={inputStyle}
             />
           </div>
 
           <button
             type="submit"
-            className="w-full py-2.5 px-4 rounded-xl bg-gradient-to-r from-sky-500 via-sky-600 to-blue-600 hover:from-sky-600 hover:to-blue-700 text-white font-semibold text-xs sm:text-sm shadow-md shadow-sky-500/20 transition-all flex items-center justify-center gap-2 active:scale-[0.98]"
+            className="w-full py-2.5 px-4 rounded-xl text-white font-semibold text-xs sm:text-sm transition-all flex items-center justify-center gap-2 active:scale-[0.98]"
+            style={{ background: 'linear-gradient(135deg, #7c3aed, #9333ea)', boxShadow: '0 0 20px rgba(139,92,246,0.3)' }}
           >
             <span>Simpan & Masuk ke Halaman Login</span>
             <ArrowRight className="w-4 h-4" />
@@ -102,13 +116,16 @@ export default function SetupSupabase() {
         </form>
 
         {/* Info box */}
-        <div className="mt-5 p-3.5 rounded-xl bg-slate-50 border border-slate-200/70 text-[11px] text-slate-500 space-y-1.5">
-          <p className="font-semibold text-slate-700">Dimana menemukan URL & Key ini?</p>
-          <p>
+        <div
+          className="mt-5 p-3.5 rounded-xl text-[11px] space-y-1.5"
+          style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.07)' }}
+        >
+          <p className="font-semibold text-white/70">Dimana menemukan URL & Key ini?</p>
+          <p className="text-white/40">
             Buka dashboard Supabase Anda di{' '}
-            <strong className="text-slate-700">Project Settings &gt; API</strong>. Salin <strong>Project URL</strong> dan <strong>anon/public Key</strong>.
+            <strong className="text-white/60">Project Settings &gt; API</strong>. Salin <strong>Project URL</strong> dan <strong>anon/public Key</strong>.
           </p>
-          <p className="text-[10px] text-slate-400 pt-1 border-t border-slate-200/50">
+          <p className="text-[10px] text-white/25 pt-1" style={{ borderTop: '1px solid rgba(255,255,255,0.05)' }}>
             * Data ini akan disimpan di browser Anda sehingga aplikasi bisa langsung terbuka tanpa perlu mematikan atau mengulang terminal.
           </p>
         </div>

@@ -1,7 +1,7 @@
 import ast
 import json
 import os
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, List
 
@@ -310,24 +310,34 @@ def _recover_tool_call(exc: Exception) -> tuple[str, str, str] | None:
     return tool_name, raw_args, tool_call_id
 
 
-def get_system_instruction(current_time: str) -> str:
-    """Membuat system instruction dengan waktu dinamis yang disuntikkan."""
+def _current_time_text(timezone_label: str) -> str:
+    """Waktu sekarang dalam zona waktu pengguna, contoh: '2026-11-16 14:30:05 (Monday) WIB'."""
+    hours = tools.TZ_OFFSETS.get(timezone_label, tools.TZ_OFFSETS["WIB"])[1]
+    now = datetime.now(timezone(timedelta(hours=hours)))
+    return f"{now.strftime('%Y-%m-%d %H:%M:%S (%A)')} {timezone_label}"
+
+
+def get_system_instruction(current_time: str, timezone_label: str) -> str:
+    """Membuat system instruction dengan waktu & zona waktu dinamis yang disuntikkan."""
+    utc_offset = tools.TZ_OFFSETS.get(timezone_label, tools.TZ_OFFSETS["WIB"])[0]
     return f"""Kamu adalah TempoAgent, asisten AI pribadi untuk optimasi tugas dan jadwal pengguna (Personal Task & Schedule Optimizer).
 
 Informasi Waktu:
-Waktu saat ini adalah: {current_time}.
+Zona waktu pengguna: {timezone_label} (UTC{utc_offset}).
+Waktu saat ini ({timezone_label}): {current_time}.
 Gunakan acuan waktu saat ini tersebut untuk menghitung dan memahami kata waktu relatif (seperti "hari ini", "besok", "lusa", "malam ini", "minggu ini", "akhir pekan", dan sejenisnya) secara langsung tanpa perlu memanggil tool tambahan untuk mencari tahu tanggal sekarang.
 
 Aturan wajib:
 1. Waktu relatif: Hitung tanggal pasti berdasarkan acuan waktu di atas. Contoh: jika hari ini 2026-11-15 (Sunday), maka "besok" adalah 2026-11-16 (Monday).
-2. Cek bentrok saat buat jadwal baru: Sebelum memanggil create_new_schedule, kamu disarankan memanggil check_availability pada tanggal tersebut. Jika bentrok, tawarkan jam alternatif yang bebas.
-3. Mengaktifkan / Menonaktifkan / Mengedit / Menghapus:
+2. Zona waktu: Seluruh tanggal dan jam yang kamu terima maupun kamu berikan (date, start_time, end_time, new_date, new_start_time, new_end_time) adalah dalam zona waktu pengguna ({timezone_label}). Jangan mengonversinya ke zona waktu lain.
+3. Cek bentrok saat buat jadwal baru: Sebelum memanggil create_new_schedule, kamu disarankan memanggil check_availability pada tanggal tersebut. Jika bentrok, tawarkan jam alternatif yang bebas.
+4. Mengaktifkan / Menonaktifkan / Mengedit / Menghapus:
    - Jika pengguna meminta "aktifkan jadwal X", "nonaktifkan jadwal Y", "ubah jam jadwal Z", atau "hapus jadwal W", langsung panggil tool yang relevan (seperti manage_schedule_by_title atau update_existing_schedule).
    - Setelah operasi selesai, berikan konfirmasi ringkas dan ramah mengenai status jadwal tersebut.
-4. Target belajar atau sub-tugas: Jika diminta menyusun target belajar atau sub-tugas, masukkan seluruh poinnya ke dalam kolom description (satu poin per baris, diawali "- "), lalu buat jadwalnya dengan judul yang ringkas.
-5. Format data: date harus YYYY-MM-DD; start_time dan end_time harus HH:MM (24 jam). Pastikan end_time lebih besar daripada start_time.
-6. Semua informasi jadwal wajib berasal dari hasil tool, jangan mengarang data.
-7. Jawab selalu dengan ringkas, ramah, dan dalam Bahasa Indonesia.
+5. Target belajar atau sub-tugas: Jika diminta menyusun target belajar atau sub-tugas, masukkan seluruh poinnya ke dalam kolom description (satu poin per baris, diawali "- "), lalu buat jadwalnya dengan judul yang ringkas.
+6. Format data: date harus YYYY-MM-DD; start_time dan end_time harus HH:MM (24 jam). Pastikan end_time lebih besar daripada start_time.
+7. Semua informasi jadwal wajib berasal dari hasil tool, jangan mengarang data.
+8. Jawab selalu dengan ringkas, ramah, dan dalam Bahasa Indonesia.
 """
 
 
@@ -344,10 +354,16 @@ class TempoAgent:
         self.model = MODEL
         self.model_candidates = list(dict.fromkeys([MODEL, *FALLBACK_MODELS]))
         self._tried_models: List[str] = []
-        current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S (%A)")
+        # Zona waktu default (akan disuntikkan ulang di setiap send_message)
+        default_tz = tools.resolve_timezone(None)
         # Riwayat percakapan (stateful), dimulai dari system prompt
         self.messages: List[Dict[str, Any]] = [
-            {"role": "system", "content": get_system_instruction(current_time)}
+            {
+                "role": "system",
+                "content": get_system_instruction(
+                    _current_time_text(default_tz), default_tz
+                ),
+            }
         ]
 
     def _create_completion(self) -> Any:
@@ -396,16 +412,28 @@ class TempoAgent:
             # Tangani error tool, kembalikan pesan error ke model agar dirangkum
             return f"Tool {name} gagal dijalankan: {str(exc)}"
 
-    def send_message(self, message: str) -> str:
-        """Mengirim pesan ke Groq dengan waktu dinamis yang di-inject langsung.
+    def send_message(
+        self,
+        message: str,
+        timezone_name: str | None = None,
+        timezone: str | None = None,
+    ) -> str:
+        """Mengirim pesan ke Groq dengan waktu dinamis sesuai zona waktu pengguna.
+
+        `timezone_name` / `timezone` boleh "WIB" / "WITA" / "WIT" (atau nama IANA seperti
+        Asia/Makassar); jika kosong, diambil dari tabel Profiles (fallback WIB).
 
         Menjalankan loop eksekusi tool call: hasil tool (dari database)
         dikembalikan ke model sampai model menghasilkan jawaban akhir.
         """
         try:
-            # 1. Suntikkan waktu saat ini secara dinamis setiap kali agent dipanggil
-            current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S (%A)")
-            self.messages[0]["content"] = get_system_instruction(current_time)
+            # 1. Tentukan zona waktu request ini (dipakai juga oleh semua tool)
+            active_tz = timezone_name if timezone_name is not None else timezone
+            tz_label = tools.resolve_timezone(active_tz)
+            # 2. Suntikkan waktu saat ini (zona waktu pengguna) setiap agent dipanggil
+            self.messages[0]["content"] = get_system_instruction(
+                _current_time_text(tz_label), tz_label
+            )
             self.messages.append({"role": "user", "content": message})
 
             # 2. Loop eksekusi tool call

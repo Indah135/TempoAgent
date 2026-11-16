@@ -1,5 +1,5 @@
 import os
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 from pathlib import Path
 from dotenv import load_dotenv
@@ -22,10 +22,13 @@ client: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 TABLE = "schedules"
 
 
-def get_schedules_by_date(user_id: str, schedule_date: str) -> list[dict[str, Any]]:
-    # schedule_date format: "YYYY-MM-DD", dicari dalam rentang awal hingga akhir hari tersebut
-    start_of_day = f"{schedule_date}T00:00:00+07:00"
-    end_of_day = f"{schedule_date}T23:59:59+07:00"
+def get_schedules_by_date(
+    user_id: str, schedule_date: str, tz_offset: str = "+07:00"
+) -> list[dict[str, Any]]:
+    # schedule_date format: "YYYY-MM-DD", dicari dalam rentang awal hingga akhir hari
+    # tersebut sesuai zona waktu pengguna (tz_offset, contoh "+08:00" untuk WITA)
+    start_of_day = f"{schedule_date}T00:00:00{tz_offset}"
+    end_of_day = f"{schedule_date}T23:59:59{tz_offset}"
 
     response = (
         client.table(TABLE)
@@ -39,9 +42,16 @@ def get_schedules_by_date(user_id: str, schedule_date: str) -> list[dict[str, An
     return response.data or []
 
 
-def get_all_upcoming_schedules(user_id: str) -> list[dict[str, Any]]:
-    # Ambil jadwal dari awal hari ini (atau semua jadwal terbaru jika hari ini kosong)
-    today_start = datetime.now().strftime("%Y-%m-%dT00:00:00+07:00")
+def get_all_upcoming_schedules(
+    user_id: str, tz_offset: str = "+07:00"
+) -> list[dict[str, Any]]:
+    # Ambil jadwal dari awal hari ini menurut zona waktu pengguna
+    # (atau semua jadwal terbaru jika hari ini kosong)
+    hours = int(tz_offset[:3])
+    today_start = (
+        datetime.now(timezone(timedelta(hours=hours))).strftime("%Y-%m-%dT00:00:00")
+        + tz_offset
+    )
     response = (
         client.table(TABLE)
         .select("*")
@@ -104,26 +114,35 @@ def insert_schedule(
     end_time: str,
     status: str = "active",
     priority: str = "medium",
+    workspace: str | None = None,
 ) -> dict[str, Any] | None:
-    # start_time & end_time menggunakan format timestamptz, contoh: "2026-11-15T09:00:00+07:00"
-    response = (
-        client.table(TABLE)
-        .insert(
-            {
-                "user_id": user_id,
-                "title": title,
-                "description": description,
-                "start_time": start_time,
-                "end_time": end_time,
-                "status": status,
-                "priority": priority,
-            }
-        )
-        .execute()
-    )
-    if response.data:
-        return response.data[0]
-    return None
+    # start_time & end_time menggunakan format timestamptz,
+    # contoh: "2026-11-15T09:00:00+07:00" (WIB) atau "+08:00" (WITA) / "+09:00" (WIT)
+    payload = {
+        "user_id": user_id,
+        "title": title,
+        "description": description,
+        "start_time": start_time,
+        "end_time": end_time,
+        "status": status,
+        "priority": priority,
+    }
+    if workspace:
+        payload["workspace"] = workspace
+
+    try:
+        response = client.table(TABLE).insert(payload).execute()
+        if response.data:
+            return response.data[0]
+        return None
+    except Exception as exc:
+        # Jika kolom workspace belum ada di Supabase, fallback simpan tanpa workspace
+        if workspace and "workspace" in str(exc).lower():
+            payload.pop("workspace", None)
+            fallback_resp = client.table(TABLE).insert(payload).execute()
+            if fallback_resp.data:
+                return fallback_resp.data[0]
+        raise exc
 
 
 def update_schedule(schedule_id: str, updates: dict[str, Any]) -> dict[str, Any] | None:
