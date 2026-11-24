@@ -317,15 +317,33 @@ def _current_time_text(timezone_label: str) -> str:
     return f"{now.strftime('%Y-%m-%d %H:%M:%S (%A)')} {timezone_label}"
 
 
-def get_system_instruction(current_time: str, timezone_label: str) -> str:
-    """Membuat system instruction dengan waktu & zona waktu dinamis yang disuntikkan."""
+def get_system_instruction(
+    current_time: str,
+    timezone_label: str,
+    workspace_label: str | None = None,
+) -> str:
+    """Membuat system instruction dengan waktu, zona waktu & workspace dinamis."""
     utc_offset = tools.TZ_OFFSETS.get(timezone_label, tools.TZ_OFFSETS["WIB"])[0]
+    if workspace_label:
+        ws_info = (
+            f"Workspace aktif: {workspace_label}. "
+            "Semua jadwal baru yang kamu buat wajib disimpan ke workspace ini "
+            "(otomatis, tanpa perlu kamu isi sendiri)."
+        )
+    else:
+        ws_info = (
+            "Workspace aktif: belum dipilih (umum). "
+            "Simpan jadwal tanpa workspace, kecuali pengguna menyebut jenis agendanya "
+            "(misal kuliah, belajar, atau kerja)."
+        )
     return f"""Kamu adalah TempoAgent, asisten AI pribadi untuk optimasi tugas dan jadwal pengguna (Personal Task & Schedule Optimizer).
 
 Informasi Waktu:
 Zona waktu pengguna: {timezone_label} (UTC{utc_offset}).
 Waktu saat ini ({timezone_label}): {current_time}.
 Gunakan acuan waktu saat ini tersebut untuk menghitung dan memahami kata waktu relatif (seperti "hari ini", "besok", "lusa", "malam ini", "minggu ini", "akhir pekan", dan sejenisnya) secara langsung tanpa perlu memanggil tool tambahan untuk mencari tahu tanggal sekarang.
+
+{ws_info}
 
 Aturan wajib:
 1. Waktu relatif: Hitung tanggal pasti berdasarkan acuan waktu di atas. Contoh: jika hari ini 2026-11-15 (Sunday), maka "besok" adalah 2026-11-16 (Monday).
@@ -417,22 +435,26 @@ class TempoAgent:
         message: str,
         timezone_name: str | None = None,
         timezone: str | None = None,
+        workspace: str | None = None,
     ) -> str:
         """Mengirim pesan ke Groq dengan waktu dinamis sesuai zona waktu pengguna.
 
         `timezone_name` / `timezone` boleh "WIB" / "WITA" / "WIT" (atau nama IANA seperti
         Asia/Makassar); jika kosong, diambil dari tabel Profiles (fallback WIB).
+        `workspace` boleh "Jadwal Kuliah" / "Rencana Belajar" / "Agenda Kerja";
+        jika kosong, jadwal baru disimpan tanpa workspace (umum).
 
         Menjalankan loop eksekusi tool call: hasil tool (dari database)
         dikembalikan ke model sampai model menghasilkan jawaban akhir.
         """
         try:
-            # 1. Tentukan zona waktu request ini (dipakai juga oleh semua tool)
+            # 1. Tentukan zona waktu & workspace request ini (dipakai juga oleh semua tool)
             active_tz = timezone_name if timezone_name is not None else timezone
             tz_label = tools.resolve_timezone(active_tz)
+            ws_label = tools.resolve_workspace(workspace)
             # 2. Suntikkan waktu saat ini (zona waktu pengguna) setiap agent dipanggil
             self.messages[0]["content"] = get_system_instruction(
-                _current_time_text(tz_label), tz_label
+                _current_time_text(tz_label), tz_label, ws_label
             )
             self.messages.append({"role": "user", "content": message})
 

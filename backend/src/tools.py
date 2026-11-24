@@ -58,6 +58,39 @@ _TZ_CTX: ContextVar[str] = ContextVar("tempo_timezone", default=DEFAULT_TIMEZONE
 _PROFILE_TZ_CACHE: dict[str, Any] = {"value": None, "at": 0.0}
 _PROFILE_TZ_TTL = 60.0
 
+# Workspace aktif untuk request/percakapan yang sedang berjalan (null = umum)
+_WS_CTX: ContextVar[str | None] = ContextVar("tempo_workspace", default=None)
+
+# Nama workspace resmi — harus sama dengan daftar di src/lib/workspaces.js
+WORKSPACE_NAMES: tuple[str, ...] = (
+    "Jadwal Kuliah",
+    "Rencana Belajar",
+    "Agenda Kerja",
+)
+
+
+def resolve_workspace(value: Any = None) -> str | None:
+    """Tentukan workspace request saat ini lalu simpan ke contextvar.
+
+    Mengembalikan nama resmi (case-insensitive) atau None jika kosong/tidak dikenal.
+    """
+    if value is None:
+        _WS_CTX.set(None)
+        return None
+    text = str(value).strip()
+    if not text:
+        _WS_CTX.set(None)
+        return None
+    lower = text.lower()
+    match = next((name for name in WORKSPACE_NAMES if name.lower() == lower), None)
+    _WS_CTX.set(match)
+    return match
+
+
+def get_workspace() -> str | None:
+    """Workspace yang berlaku untuk request/percakapan ini (None = umum)."""
+    return _WS_CTX.get()
+
 
 def normalize_timezone(value: Any) -> str:
     """Petakan berbagai bentuk nama zona waktu ke label WIB / WITA / WIT."""
@@ -297,6 +330,7 @@ def create_new_schedule(
             start_time=_to_timestamptz(date, start_time),
             end_time=_to_timestamptz(date, end_time),
             status=status,
+            workspace=get_workspace(),
         )
     except Exception as exc:
         return f"Gagal menyimpan jadwal: {exc}"

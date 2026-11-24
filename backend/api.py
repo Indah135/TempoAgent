@@ -19,6 +19,7 @@ from src.tools import (
     get_tz_offset,
     resolve_timezone,
     resolve_user_id,
+    resolve_workspace,
 )
 
 app = FastAPI(
@@ -52,6 +53,9 @@ class ChatRequest(BaseModel):
     # Zona waktu pengguna: "WIB" / "WITA" / "WIT" (atau nama IANA).
     # Jika kosong, backend membaca dari tabel Profiles (fallback WIB).
     timezone: str | None = None
+    # Workspace aktif: "Jadwal Kuliah" / "Rencana Belajar" / "Agenda Kerja".
+    # Jika kosong, jadwal baru disimpan tanpa workspace (umum).
+    workspace: str | None = None
 
 
 class ChatResponse(BaseModel):
@@ -67,6 +71,8 @@ class UpdateScheduleRequest(BaseModel):
     status: str | None = None
     priority: str | None = None
     timezone: str | None = None
+    # String kosong "" = hapus tag workspace; None = tidak diubah
+    workspace: str | None = None
 
 
 @app.get("/")
@@ -97,6 +103,7 @@ def chat_with_agent(payload: ChatRequest):
             user_message,
             timezone_name=payload.timezone,
             timezone=payload.timezone,
+            workspace=payload.workspace,
         )
         return ChatResponse(reply=reply_text)
     except Exception as exc:
@@ -142,17 +149,21 @@ def _normalize_time_str(time_str: str | None, default: str) -> str:
 async def upload_schedule_file(
     file: UploadFile = File(...),
     timezone_name: str | None = Form(None),
+    workspace: str | None = Form(None),
 ):
     """
     Ekstraksi jadwal dari foto (JPG/PNG/WEBP) atau dokumen (PDF/Excel/CSV)
     menggunakan Groq (hybrid vision/text). Mengonversi nama hari menjadi tanggal
-    terdekat dan menyimpannya ke Supabase dengan workspace = 'Jadwal Kuliah'.
+    terdekat dan menyimpannya ke Supabase dengan workspace pilihan pengguna
+    (default 'Jadwal Kuliah').
     """
     try:
         file_bytes = await file.read()
         filename = file.filename or "uploaded_schedule"
 
-        extracted_items = extractor.extract_schedule_from_file(file_bytes, filename)
+        extracted_items = extractor.extract_schedule_from_file(
+            file_bytes, filename, content_type=file.content_type
+        )
         if not extracted_items:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -163,6 +174,7 @@ async def upload_schedule_file(
         tz_offset = get_tz_offset()
         tz_hours = get_tz_hours()
         user_id = resolve_user_id()
+        ws_label = resolve_workspace(workspace) or "Jadwal Kuliah"
 
         saved_schedules = []
         for item in extracted_items:
@@ -183,7 +195,7 @@ async def upload_schedule_file(
                 end_time=end_iso,
                 status="active",
                 priority="medium",
-                workspace="Jadwal Kuliah",
+                workspace=ws_label,
             )
             if inserted:
                 saved_schedules.append(inserted)
@@ -192,10 +204,10 @@ async def upload_schedule_file(
             "success": True,
             "count": len(saved_schedules),
             "filename": filename,
-            "workspace": "Jadwal Kuliah",
+            "workspace": ws_label,
             "schedules": saved_schedules,
             "extracted_items": extracted_items,
-            "message": f"Berhasil mengekstrak dan menyimpan {len(saved_schedules)} jadwal ke 'Jadwal Kuliah'.",
+            "message": f"Berhasil mengekstrak dan menyimpan {len(saved_schedules)} jadwal ke '{ws_label}'.",
         }
     except ValueError as ve:
         raise HTTPException(
@@ -270,6 +282,9 @@ def edit_schedule(schedule_id: str, payload: UpdateScheduleRequest):
         updates["status"] = payload.status
     if payload.priority is not None:
         updates["priority"] = payload.priority
+    if payload.workspace is not None:
+        # String kosong -> None (hapus tag workspace)
+        updates["workspace"] = payload.workspace.strip() or None
 
     # Zona waktu pengguna untuk menyusun ulang timestamp
     resolve_timezone(payload.timezone)

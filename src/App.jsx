@@ -9,7 +9,8 @@ import ProfilePanel from './components/ProfilePanel';
 import HistoryPanel from './components/HistoryPanel';
 import { supabase, isSupabaseConfigured } from './lib/supabase';
 import { detectTimezone } from './lib/timezone';
-import { sendChatMessage, fetchSchedules, fetchAllSchedules, deleteSchedule, uploadScheduleFile } from './api';
+import { countSchedulesByWorkspace } from './lib/workspaces';
+import { sendChatMessage, fetchSchedules, fetchAllSchedules, deleteSchedule, updateSchedule, uploadScheduleFile } from './api';
 import { Sparkles } from 'lucide-react';
 
 export default function App() {
@@ -30,6 +31,16 @@ export default function App() {
   const [allSchedules, setAllSchedules] = useState([]);
   const [isLoadingHistory, setIsLoadingHistory] = useState(false);
   const [historyError, setHistoryError] = useState(null);
+  // Sumber data riwayat: 'server' | 'supabase' | 'cache' (untuk badge status)
+  const [historySource, setHistorySource] = useState(null);
+  const [historySavedAt, setHistorySavedAt] = useState(null);
+
+  // Workspace aktif (null = Semua Agenda) — berlaku untuk Sidebar, Agenda & Riwayat
+  const [activeWorkspace, setActiveWorkspace] = useState(null);
+  const workspaceCounts = useMemo(
+    () => countSchedulesByWorkspace(schedules),
+    [schedules]
+  );
 
   // Zona waktu pengguna (WIB/WITA/WIT): dari profil, fallback deteksi browser
   const detectedTimezone = useMemo(() => detectTimezone(), []);
@@ -134,20 +145,25 @@ export default function App() {
   }, [session, loadSchedules]);
 
   // Muat seluruh riwayat jadwal saat tab Riwayat Tugas dibuka
+  // (fallback otomatis: backend → Supabase langsung → cache lokal)
+  const userId = user?.id;
   const loadAllSchedules = useCallback(async () => {
     if (!session) return;
     setIsLoadingHistory(true);
     setHistoryError(null);
     try {
-      const data = await fetchAllSchedules();
-      setAllSchedules(data);
+      const result = await fetchAllSchedules(userId);
+      setAllSchedules(result.schedules);
+      setHistorySource(result.source || 'server');
+      setHistorySavedAt(result.savedAt || new Date().toISOString());
     } catch (err) {
       console.error('Gagal mengambil riwayat jadwal:', err);
-      setHistoryError('Gagal memuat riwayat dari server.');
+      setHistoryError(err.message || 'Gagal memuat riwayat dari server.');
+      setHistorySource(null);
     } finally {
       setIsLoadingHistory(false);
     }
-  }, [session]);
+  }, [session, userId]);
 
   useEffect(() => {
     if (session && activeMenu === 'history') {
@@ -162,7 +178,7 @@ export default function App() {
     setIsSending(true);
 
     try {
-      const reply = await sendChatMessage(text, timezone);
+      const reply = await sendChatMessage(text, timezone, activeWorkspace);
       setMessages((prev) => [...prev, { role: 'assistant', content: reply }]);
     } catch (err) {
       console.error('Chat error:', err);
@@ -193,7 +209,7 @@ export default function App() {
     setIsUploading(true);
 
     try {
-      const result = await uploadScheduleFile(file, userTimezone);
+      const result = await uploadScheduleFile(file, timezone, activeWorkspace);
 
       let summaryText = `✅ **Berhasil mengekstrak ${result.count} jadwal dari "${result.filename}"!**\n\nJadwal otomatis disimpan ke database (Workspace: **${result.workspace}**):\n`;
       if (result.extracted_items && result.extracted_items.length > 0) {
@@ -213,7 +229,7 @@ export default function App() {
         ...prev,
         {
           role: 'assistant',
-          content: `❌ **Gagal mengekstrak jadwal dari "${file.name}":**\n${err.message}\n\n*Pastikan file berisi teks/tabel jadwal yang jelas (format yang didukung: JPG, PNG, WEBP, PDF, Excel, CSV).*`,
+          content: `❌ **Gagal mengekstrak jadwal dari "${file.name}":**\n${err.message}\n\n*Pastikan file berisi teks/tabel jadwal yang jelas (format yang didukung: foto JPG/JPEG, PNG, WEBP, PDF, Excel, CSV).*`,
         },
       ]);
     } finally {
@@ -227,6 +243,13 @@ export default function App() {
   // Menghapus jadwal
   const handleDeleteSchedule = async (id) => {
     await deleteSchedule(id);
+    await loadSchedules();
+    if (activeMenu === 'history') await loadAllSchedules();
+  };
+
+  // Edit manual hari & jam jadwal dari kartu (Agenda / Riwayat)
+  const handleUpdateSchedule = async (id, updates) => {
+    await updateSchedule(id, updates, timezone);
     await loadSchedules();
     if (activeMenu === 'history') await loadAllSchedules();
   };
@@ -245,6 +268,9 @@ export default function App() {
       setMessages([]);
       setSchedules([]);
       setAllSchedules([]);
+      setHistorySource(null);
+      setHistorySavedAt(null);
+      setActiveWorkspace(null);
       // Arahkan kembali URL ke /login saat logout
       window.history.replaceState(null, '', '/login');
     }
@@ -286,6 +312,9 @@ export default function App() {
           onNavigate={setActiveMenu}
           user={user}
           onLogout={handleLogout}
+          activeWorkspace={activeWorkspace}
+          onSelectWorkspace={setActiveWorkspace}
+          workspaceCounts={workspaceCounts}
         />
 
         {/* Konten utama di sebelah kanan sidebar */}
@@ -320,12 +349,12 @@ export default function App() {
             })}
           </nav>
 
-          <main className="flex-1 min-h-0 p-3 sm:p-4 lg:p-5 overflow-hidden">
+          <main className="flex-1 min-h-0 p-2.5 sm:p-4 lg:p-5 overflow-y-auto lg:overflow-hidden">
             {activeMenu === 'dashboard' && (
-              /* Dashboard: 2-Column Layout */
-              <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 lg:gap-5 h-full min-h-0">
-                {/* Kolom Kiri: Chat */}
-                <section className="lg:col-span-5 h-full min-h-0 flex flex-col">
+              /* Dashboard: Mobile Vertical Stack (Scrollable) / Desktop 2-Column Grid */
+              <div className="flex flex-col lg:grid lg:grid-cols-12 gap-5 lg:gap-5 min-h-0 lg:h-full pb-4 lg:pb-0">
+                {/* Kolom Kiri: Chat AI (Panjang & Nyaman di Handphone) */}
+                <section className="lg:col-span-5 h-[580px] sm:h-[620px] lg:h-full flex flex-col shrink-0 lg:shrink min-h-0">
                   <ChatPanel
                     messages={messages}
                     isSending={isSending}
@@ -336,35 +365,43 @@ export default function App() {
                   />
                 </section>
 
-                {/* Kolom Kanan: Agenda */}
-                <section className="lg:col-span-7 h-full min-h-0 flex flex-col">
+                {/* Kolom Kanan: Agenda & Jadwal (Panjang & Jelas di Handphone) */}
+                <section className="lg:col-span-7 h-[540px] sm:h-[580px] lg:h-full flex flex-col shrink-0 lg:shrink min-h-0">
                   <SchedulePanel
                     schedules={schedules}
                     isLoading={isLoadingSchedules}
                     error={scheduleError}
                     onRefresh={loadSchedules}
                     onDelete={handleDeleteSchedule}
+                    onUpdate={handleUpdateSchedule}
                     onQuickPrompt={handleSendMessage}
+                    activeWorkspace={activeWorkspace}
+                    onSelectWorkspace={setActiveWorkspace}
                   />
                 </section>
               </div>
             )}
 
             {activeMenu === 'history' && (
-              <div className="h-full min-h-0 flex flex-col">
+              <div className="h-[600px] lg:h-full min-h-0 flex flex-col">
                 <HistoryPanel
                   schedules={allSchedules}
                   isLoading={isLoadingHistory}
                   error={historyError}
+                  source={historySource}
+                  savedAt={historySavedAt}
                   onRefresh={loadAllSchedules}
                   onDelete={handleDeleteSchedule}
+                  onUpdate={handleUpdateSchedule}
                   onQuickPrompt={handleSendMessage}
+                  activeWorkspace={activeWorkspace}
+                  onSelectWorkspace={setActiveWorkspace}
                 />
               </div>
             )}
 
             {activeMenu === 'profile' && (
-              <div className="h-full min-h-0 flex flex-col">
+              <div className="min-h-[500px] lg:h-full min-h-0 flex flex-col">
                 <ProfilePanel
                   user={user}
                   schedules={schedules}

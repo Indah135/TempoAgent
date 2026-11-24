@@ -155,19 +155,43 @@ def _call_groq_vision(image_base64: str, mime_type: str) -> str:
     raise RuntimeError(f"Gagal memanggil model vision Groq: {last_err}")
 
 
-def extract_from_image(file_bytes: bytes, filename: str) -> List[Dict[str, Any]]:
-    """Ekstraksi jadwal dari file gambar (JPG, PNG, WEBP)."""
-    ext = Path(filename).suffix.lower()
-    mime_type, _ = mimetypes.guess_type(filename)
-    if not mime_type:
-        if ext in [".jpg", ".jpeg"]:
-            mime_type = "image/jpeg"
-        elif ext == ".png":
-            mime_type = "image/png"
-        elif ext == ".webp":
-            mime_type = "image/webp"
-        else:
-            mime_type = "image/jpeg"
+def _sniff_image_mime(data: bytes) -> str | None:
+    """Deteksi tipe gambar dari magic bytes (tanpa peduli nama/ekstensi file)."""
+    if data[:3] == b"\xff\xd8\xff":
+        return "image/jpeg"
+    if data[:8] == b"\x89PNG\r\n\x1a\n":
+        return "image/png"
+    if len(data) >= 12 and data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return "image/webp"
+    return None
+
+
+IMAGE_EXTS = {".jpg", ".jpeg", ".jpe", ".jfif", ".png", ".webp"}
+
+
+def _image_mime_from_ext(ext: str) -> str | None:
+    if ext in {".jpg", ".jpeg", ".jpe", ".jfif"}:
+        return "image/jpeg"
+    if ext == ".png":
+        return "image/png"
+    if ext == ".webp":
+        return "image/webp"
+    return None
+
+
+def extract_from_image(
+    file_bytes: bytes, filename: str, mime_type: str | None = None
+) -> List[Dict[str, Any]]:
+    """Ekstraksi jadwal dari file gambar (JPG/JPEG/JFIF, PNG, WEBP)."""
+    if not mime_type or not mime_type.startswith("image/"):
+        ext = Path(filename).suffix.lower()
+        guessed, _ = mimetypes.guess_type(filename)
+        mime_type = (
+            _sniff_image_mime(file_bytes)
+            or guessed
+            or _image_mime_from_ext(ext)
+            or "image/jpeg"
+        )
 
     image_b64 = base64.b64encode(file_bytes).decode("utf-8")
     raw_output = _call_groq_vision(image_b64, mime_type)
@@ -243,20 +267,40 @@ def extract_from_csv(file_bytes: bytes) -> List[Dict[str, Any]]:
     return _clean_json_response(raw_output)
 
 
-def extract_schedule_from_file(file_bytes: bytes, filename: str) -> List[Dict[str, Any]]:
-    """Router utama untuk mengekstrak jadwal berdasarkan jenis file."""
-    ext = Path(filename).suffix.lower()
+def extract_schedule_from_file(
+    file_bytes: bytes, filename: str, content_type: str | None = None
+) -> List[Dict[str, Any]]:
+    """Router utama untuk mengekstrak jadwal berdasarkan jenis file.
 
-    if ext in [".jpg", ".jpeg", ".png", ".webp"]:
-        return extract_from_image(file_bytes, filename)
-    elif ext == ".pdf":
-        return extract_from_pdf(file_bytes)
-    elif ext in [".xlsx", ".xls"]:
-        return extract_from_excel(file_bytes)
-    elif ext == ".csv":
-        return extract_from_csv(file_bytes)
-    else:
-        raise ValueError(
-            f"Format file '{ext}' tidak didukung. "
-            "Gunakan gambar (.jpg, .jpeg, .png, .webp), PDF (.pdf), Excel (.xlsx), atau CSV (.csv)."
+    Mendukung foto JPEG (.jpg/.jpeg/.jpe/.jfif), PNG, WEBP, PDF, Excel, dan CSV.
+    Jika ekstensi tidak dikenal, tipe file dideteksi dari magic bytes
+    dan/atau content-type browser agar foto JPEG tetap terbaca.
+    """
+    ext = Path(filename).suffix.lower()
+    sniffed = _sniff_image_mime(file_bytes)
+
+    # Gambar: ekstensi dikenal, magic bytes cocok, atau content-type browser image/*
+    if (
+        ext in IMAGE_EXTS
+        or sniffed is not None
+        or (content_type or "").startswith("image/")
+    ):
+        mime = (
+            sniffed
+            or (content_type if (content_type or "").startswith("image/") else None)
+            or _image_mime_from_ext(ext)
+            or "image/jpeg"
         )
+        return extract_from_image(file_bytes, filename, mime_type=mime)
+
+    if ext == ".pdf":
+        return extract_from_pdf(file_bytes)
+    if ext in {".xlsx", ".xls"}:
+        return extract_from_excel(file_bytes)
+    if ext == ".csv":
+        return extract_from_csv(file_bytes)
+
+    raise ValueError(
+        f"Format file '{ext or filename}' tidak didukung. "
+        "Gunakan foto (JPG/JPEG, PNG, WEBP), PDF (.pdf), Excel (.xlsx), atau CSV (.csv)."
+    )

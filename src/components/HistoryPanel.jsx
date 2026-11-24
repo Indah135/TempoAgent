@@ -6,9 +6,17 @@ import {
   AlertCircle,
   ChevronLeft,
   ChevronRight,
+  Layers,
+  X,
 } from 'lucide-react';
 import ScheduleCard from './ScheduleCard';
 import EmptyState from './EmptyState';
+import {
+  WORKSPACE_ITEMS,
+  matchesWorkspace,
+  countSchedulesByWorkspace,
+  getWorkspaceInfo,
+} from '../lib/workspaces';
 
 // Rentang minggu berjalan (Senin s/d Minggu) dengan offset minggu
 function getWeekRange(offset) {
@@ -81,19 +89,46 @@ function getItemDate(item) {
   return Number.isNaN(d.getTime()) ? null : d;
 }
 
+function formatSavedAt(iso) {
+  if (!iso) return '';
+  try {
+    return new Date(iso).toLocaleString('id-ID', {
+      day: 'numeric',
+      month: 'short',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+  } catch {
+    return '';
+  }
+}
+
 export default function HistoryPanel({
   schedules,
   isLoading,
   error,
+  source,
+  savedAt,
   onRefresh,
   onDelete,
+  onUpdate,
   onQuickPrompt,
+  activeWorkspace = null,
+  onSelectWorkspace,
 }) {
-  const [mode, setMode] = useState('week'); // 'week' | 'month'
+  const [mode, setMode] = useState('week'); // 'all' | 'week' | 'month'
   const [offset, setOffset] = useState(0); // offset minggu (mode week)
   const [selectedMonth, setSelectedMonth] = useState(new Date().getMonth());
   const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
   const [searchQuery, setSearchQuery] = useState('');
+
+  const workspaceCounts = useMemo(() => {
+    return countSchedulesByWorkspace(schedules);
+  }, [schedules]);
+
+  const currentWs = useMemo(() => {
+    return getWorkspaceInfo(activeWorkspace);
+  }, [activeWorkspace]);
 
   const range = useMemo(
     () =>
@@ -103,7 +138,7 @@ export default function HistoryPanel({
     [mode, offset, selectedMonth, selectedYear]
   );
   const rangeLabel = useMemo(
-    () => formatRangeLabel(mode, range),
+    () => (mode === 'all' ? 'Semua waktu' : formatRangeLabel(mode, range)),
     [mode, range]
   );
 
@@ -117,18 +152,25 @@ export default function HistoryPanel({
     return Array.from(years).sort((a, b) => a - b);
   }, [schedules]);
 
-  // Filter jadwal pada periode aktif + pencarian kata kunci
+  // Filter jadwal pada periode aktif + pencarian kata kunci + workspace
+  // (mode 'all' menampilkan seluruh jadwal tanpa batas periode)
   const filtered = useMemo(() => {
     const query = searchQuery.trim().toLowerCase();
     return schedules
       .filter((item) => {
-        const d = getItemDate(item);
-        if (!d || d < range.start || d >= range.end) return false;
+        // Filter workspace
+        if (!matchesWorkspace(item, activeWorkspace)) return false;
+
+        if (mode !== 'all') {
+          const d = getItemDate(item);
+          if (!d || d < range.start || d >= range.end) return false;
+        }
         if (!query) return true;
         return (
           (item.title || '').toLowerCase().includes(query) ||
           (item.description || '').toLowerCase().includes(query) ||
-          (item.status || '').toLowerCase().includes(query)
+          (item.status || '').toLowerCase().includes(query) ||
+          (item.workspace || '').toLowerCase().includes(query)
         );
       })
       .sort((a, b) => {
@@ -136,7 +178,7 @@ export default function HistoryPanel({
         const db = getItemDate(b)?.getTime() ?? 0;
         return da - db;
       });
-  }, [schedules, range, searchQuery]);
+  }, [schedules, range, searchQuery, mode, activeWorkspace]);
 
   const handlePrev = () => {
     if (mode === 'week') {
@@ -164,6 +206,7 @@ export default function HistoryPanel({
   };
 
   const tabs = [
+    { id: 'all', label: 'Semua' },
     { id: 'week', label: 'Mingguan' },
     { id: 'month', label: 'Bulanan' },
   ];
@@ -202,9 +245,37 @@ export default function HistoryPanel({
               >
                 {filtered.length}
               </span>
+              {source === 'cache' && (
+                <span
+                  className="px-2 py-0.5 rounded-full text-[10px] font-bold"
+                  title={`Backend tidak terhubung. Menampilkan data tersimpan di perangkat${
+                    savedAt ? ` (tersimpan ${formatSavedAt(savedAt)})` : ''
+                  }.`}
+                  style={{
+                    background: 'rgba(251,191,36,0.15)',
+                    color: '#fbbf24',
+                    border: '1px solid rgba(251,191,36,0.3)',
+                  }}
+                >
+                  Offline — data lokal{savedAt ? ` (${formatSavedAt(savedAt)})` : ''}
+                </span>
+              )}
+              {source === 'supabase' && (
+                <span
+                  className="px-2 py-0.5 rounded-full text-[10px] font-bold"
+                  title="Backend tidak terhubung — riwayat dimuat langsung dari Supabase."
+                  style={{
+                    background: 'rgba(52,211,153,0.15)',
+                    color: '#34d399',
+                    border: '1px solid rgba(52,211,153,0.3)',
+                  }}
+                >
+                  Langsung Supabase
+                </span>
+              )}
             </div>
             <p className="text-[11px] text-white/40">
-              Tampilan per minggu dan per bulan
+              Semua jadwal tersimpan permanen — tampilan per minggu, per bulan, atau semua
             </p>
           </div>
         </div>
@@ -235,6 +306,81 @@ export default function HistoryPanel({
             <RefreshCw className={`w-4 h-4 ${isLoading ? 'animate-spin text-purple-400' : ''}`} />
           </button>
         </div>
+      </div>
+
+      {/* Workspace Quick-Tabs Bar */}
+      <div
+        className="px-4 py-2 flex items-center gap-1.5 overflow-x-auto shrink-0 scrollbar-none"
+        style={{
+          background: 'rgba(10, 4, 22, 0.45)',
+          borderBottom: '1px solid rgba(255,255,255,0.06)',
+        }}
+      >
+        <span className="text-[10px] font-bold text-white/30 uppercase tracking-wider pr-1 shrink-0">
+          Workspace:
+        </span>
+
+        {/* Tab: Semua */}
+        <button
+          type="button"
+          onClick={() => onSelectWorkspace && onSelectWorkspace(null)}
+          className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold whitespace-nowrap transition-all ${
+            activeWorkspace === null
+              ? 'text-white bg-white/15 border border-white/20'
+              : 'text-white/50 hover:text-white/80 hover:bg-white/5'
+          }`}
+        >
+          <Layers className="w-3 h-3 text-purple-300" />
+          <span>Semua</span>
+          <span className="text-[10px] opacity-70">({workspaceCounts.all})</span>
+        </button>
+
+        {/* 3 Workspaces */}
+        {WORKSPACE_ITEMS.map((ws) => {
+          const Icon = ws.icon;
+          const isActive = activeWorkspace === ws.name;
+          const count = workspaceCounts[ws.name] ?? 0;
+
+          return (
+            <button
+              key={ws.id}
+              type="button"
+              onClick={() => onSelectWorkspace && onSelectWorkspace(ws.name)}
+              className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold whitespace-nowrap transition-all ${
+                isActive
+                  ? 'text-white border shadow-sm'
+                  : 'text-white/55 hover:text-white hover:bg-white/5'
+              }`}
+              style={
+                isActive
+                  ? {
+                      background: ws.activeBg,
+                      borderColor: ws.badgeBorder,
+                      color: ws.textColor,
+                    }
+                  : {}
+              }
+            >
+              <Icon
+                className="w-3 h-3"
+                style={{ color: isActive ? ws.textColor : 'rgba(255,255,255,0.4)' }}
+              />
+              <span>{ws.shortLabel}</span>
+              <span className="text-[10px] opacity-80">({count})</span>
+            </button>
+          );
+        })}
+
+        {activeWorkspace && (
+          <button
+            type="button"
+            onClick={() => onSelectWorkspace && onSelectWorkspace(null)}
+            className="ml-auto inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] text-white/40 hover:text-white hover:bg-white/10 transition-all shrink-0"
+          >
+            <X className="w-3 h-3" />
+            <span className="hidden sm:inline">Hapus filter</span>
+          </button>
+        )}
       </div>
 
       {/* Filter Periode */}
@@ -300,7 +446,7 @@ export default function HistoryPanel({
               <ChevronRight className="w-4 h-4" />
             </button>
           </div>
-        ) : (
+        ) : mode === 'month' ? (
           <div className="flex items-center gap-2">
             <button
               type="button"
@@ -350,7 +496,7 @@ export default function HistoryPanel({
               <ChevronRight className="w-4 h-4" />
             </button>
           </div>
-        )}
+        ) : null}
       </div>
 
       {/* Content Area */}
@@ -394,25 +540,36 @@ export default function HistoryPanel({
               }}
             >
               <p className="text-sm font-semibold text-white/70 mb-1">
-                Tidak ada tugas pada periode ini
+                {mode === 'all'
+                  ? 'Belum ada jadwal tersimpan'
+                  : 'Tidak ada tugas pada periode ini'}
               </p>
               <p className="text-xs text-white/30">
                 {mode === 'week'
                   ? 'Tidak ada jadwal pada minggu ini. Coba pindah minggu dengan tombol ‹ ›.'
-                  : 'Tidak ada jadwal pada bulan ini. Pilih bulan lain di dropdown.'}
+                  : mode === 'month'
+                    ? 'Tidak ada jadwal pada bulan ini. Pilih bulan lain di dropdown.'
+                    : 'Buat jadwal lewat chat AI — semua jadwal otomatis tersimpan permanen di sini.'}
               </p>
-              <button
-                type="button"
-                onClick={handleReset}
-                className="mt-3 text-xs font-semibold text-purple-400 hover:text-purple-300 underline"
-              >
-                Kembali ke periode sekarang
-              </button>
+              {mode !== 'all' && (
+                <button
+                  type="button"
+                  onClick={handleReset}
+                  className="mt-3 text-xs font-semibold text-purple-400 hover:text-purple-300 underline"
+                >
+                  Kembali ke periode sekarang
+                </button>
+              )}
             </div>
           )
         ) : (
           filtered.map((item) => (
-            <ScheduleCard key={item.id} schedule={item} onDelete={onDelete} />
+            <ScheduleCard
+              key={item.id}
+              schedule={item}
+              onDelete={onDelete}
+              onUpdate={onUpdate}
+            />
           ))
         )}
       </div>

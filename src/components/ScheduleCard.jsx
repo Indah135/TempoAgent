@@ -1,8 +1,39 @@
 import React, { useState } from 'react';
-import { Calendar, Clock, Trash2, CheckCircle, ListTodo, AlertCircle } from 'lucide-react';
+import {
+  Calendar,
+  Clock,
+  Trash2,
+  CheckCircle,
+  ListTodo,
+  AlertCircle,
+  Pencil,
+  Save,
+  X,
+  Layers,
+} from 'lucide-react';
+import { detectWorkspaceForItem, WORKSPACE_ITEMS } from '../lib/workspaces';
 
-export default function ScheduleCard({ schedule, onDelete }) {
+const DAY_NAMES = [
+  'Minggu',
+  'Senin',
+  'Selasa',
+  'Rabu',
+  'Kamis',
+  'Jumat',
+  'Sabtu',
+];
+
+export default function ScheduleCard({ schedule, onDelete, onUpdate }) {
   const [isDeleting, setIsDeleting] = useState(false);
+
+  // Mode edit manual (hari & jam)
+  const [isEditing, setIsEditing] = useState(false);
+  const [editDate, setEditDate] = useState('');
+  const [editStart, setEditStart] = useState('');
+  const [editEnd, setEditEnd] = useState('');
+  const [editWorkspace, setEditWorkspace] = useState('');
+  const [isSavingEdit, setIsSavingEdit] = useState(false);
+  const [editError, setEditError] = useState(null);
 
   const formatDate = (dateStr) => {
     if (!dateStr) return '';
@@ -54,6 +85,56 @@ export default function ScheduleCard({ schedule, onDelete }) {
     }
   };
 
+  const getDayName = (dateStr) => {
+    if (!dateStr) return '';
+    const parts = String(dateStr).split('-');
+    if (parts.length !== 3) return '';
+    const d = new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2]));
+    return DAY_NAMES[d.getDay()];
+  };
+
+  const openEdit = () => {
+    setEditDate(String(schedule.schedule_date || schedule.start_time || '').split('T')[0]);
+    setEditStart(formatTime(schedule.start_time));
+    setEditEnd(formatTime(schedule.end_time));
+    setEditWorkspace(schedule.workspace || detectWorkspaceForItem(schedule)?.name || '');
+    setEditError(null);
+    setIsEditing(true);
+  };
+
+  const cancelEdit = () => {
+    setIsEditing(false);
+    setEditError(null);
+  };
+
+  const handleSaveEdit = async () => {
+    if (!editDate || !editStart || !editEnd) {
+      setEditError('Hari/tanggal dan jam wajib diisi.');
+      return;
+    }
+    if (editEnd <= editStart) {
+      setEditError('Jam selesai harus setelah jam mulai.');
+      return;
+    }
+
+    setIsSavingEdit(true);
+    setEditError(null);
+    try {
+      await onUpdate(schedule.id, {
+        schedule_date: editDate,
+        start_time: editStart,
+        end_time: editEnd,
+        workspace: editWorkspace,
+      });
+      setIsEditing(false);
+    } catch (err) {
+      console.error(err);
+      setEditError(err.message || 'Gagal menyimpan perubahan. Coba lagi.');
+    } finally {
+      setIsSavingEdit(false);
+    }
+  };
+
   const renderDescription = (desc) => {
     if (!desc) return null;
 
@@ -91,6 +172,8 @@ export default function ScheduleCard({ schedule, onDelete }) {
 
   const status = schedule.status || 'scheduled';
   const isScheduled = status.toLowerCase() === 'scheduled';
+  const wsInfo = detectWorkspaceForItem(schedule);
+  const WsIcon = wsInfo?.icon;
 
   return (
     <div
@@ -103,7 +186,11 @@ export default function ScheduleCard({ schedule, onDelete }) {
       {/* Top accent bar */}
       <div
         className="absolute top-0 left-0 right-0 h-0.5"
-        style={{ background: 'linear-gradient(90deg, #7c3aed, #9333ea, #c084fc)' }}
+        style={{
+          background: wsInfo?.accentColor
+            ? `linear-gradient(90deg, ${wsInfo.accentColor}, #9333ea, #c084fc)`
+            : 'linear-gradient(90deg, #7c3aed, #9333ea, #c084fc)',
+        }}
       />
 
       <div className="flex items-start justify-between gap-3">
@@ -126,51 +213,196 @@ export default function ScheduleCard({ schedule, onDelete }) {
               />
               {status}
             </span>
+
+            {wsInfo && (
+              <span
+                className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold"
+                style={{
+                  background: wsInfo.badgeBg,
+                  border: `1px solid ${wsInfo.badgeBorder}`,
+                  color: wsInfo.textColor,
+                }}
+                title={`Workspace: ${wsInfo.label}`}
+              >
+                <WsIcon className="w-3 h-3 shrink-0" />
+                <span>{wsInfo.label}</span>
+              </span>
+            )}
           </div>
 
-          {/* Date & Time Row */}
-          <div className="flex flex-wrap items-center gap-y-1 gap-x-3 text-xs mt-1">
+          {/* Date & Time Row — atau form edit manual */}
+          {isEditing ? (
             <div
-              className="inline-flex items-center gap-1.5 font-medium px-2 py-0.5 rounded"
-              style={{ background: 'rgba(255,255,255,0.06)', color: 'rgba(255,255,255,0.7)' }}
+              className="mt-2.5 rounded-lg p-2.5 space-y-2"
+              style={{
+                background: 'rgba(139,92,246,0.08)',
+                border: '1px solid rgba(139,92,246,0.3)',
+              }}
             >
-              <Calendar className="w-3.5 h-3.5 text-purple-400" />
-              <span>{formatDate(schedule.schedule_date || schedule.start_time)}</span>
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-purple-300">
+                  <Pencil className="w-3 h-3" />
+                  Edit Hari & Waktu
+                </span>
+                {getDayName(editDate) && (
+                  <span
+                    className="px-2 py-0.5 rounded-full text-[10px] font-bold text-purple-200"
+                    style={{ background: 'rgba(139,92,246,0.25)' }}
+                  >
+                    {getDayName(editDate)}
+                  </span>
+                )}
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2">
+                <input
+                  type="date"
+                  value={editDate}
+                  onChange={(e) => setEditDate(e.target.value)}
+                  disabled={isSavingEdit}
+                  aria-label="Hari / tanggal jadwal"
+                  className="px-2 py-1.5 rounded-lg text-xs text-white focus:outline-none focus:ring-1 focus:ring-purple-500/50 disabled:opacity-60 [color-scheme:dark]"
+                  style={{ background: 'rgba(255,255,255,0.07)', border: '1px solid rgba(139,92,246,0.3)' }}
+                />
+                <input
+                  type="time"
+                  value={editStart}
+                  onChange={(e) => setEditStart(e.target.value)}
+                  disabled={isSavingEdit}
+                  aria-label="Jam mulai"
+                  className="px-2 py-1.5 rounded-lg text-xs text-white focus:outline-none focus:ring-1 focus:ring-purple-500/50 disabled:opacity-60 [color-scheme:dark]"
+                  style={{ background: 'rgba(255,255,255,0.07)', border: '1px solid rgba(139,92,246,0.3)' }}
+                />
+                <span className="text-white/40 text-xs">–</span>
+                <input
+                  type="time"
+                  value={editEnd}
+                  onChange={(e) => setEditEnd(e.target.value)}
+                  disabled={isSavingEdit}
+                  aria-label="Jam selesai"
+                  className="px-2 py-1.5 rounded-lg text-xs text-white focus:outline-none focus:ring-1 focus:ring-purple-500/50 disabled:opacity-60 [color-scheme:dark]"
+                  style={{ background: 'rgba(255,255,255,0.07)', border: '1px solid rgba(139,92,246,0.3)' }}
+                />
+              </div>
+
+              {/* Pilihan Workspace saat edit */}
+              <div className="flex items-center gap-2 pt-0.5">
+                <span className="text-[11px] text-white/50 shrink-0">Workspace:</span>
+                <select
+                  value={editWorkspace}
+                  onChange={(e) => setEditWorkspace(e.target.value)}
+                  disabled={isSavingEdit}
+                  aria-label="Pilih Workspace"
+                  className="px-2.5 py-1 rounded-lg text-xs text-white focus:outline-none focus:ring-1 focus:ring-purple-500/50 [color-scheme:dark] flex-1 max-w-xs"
+                  style={{ background: 'rgba(255,255,255,0.07)', border: '1px solid rgba(139,92,246,0.3)' }}
+                >
+                  <option value="">(Umum / Tanpa Workspace)</option>
+                  {WORKSPACE_ITEMS.map((ws) => (
+                    <option key={ws.id} value={ws.name}>
+                      {ws.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {editError && (
+                <p className="text-[11px] text-red-400 flex items-center gap-1">
+                  <AlertCircle className="w-3 h-3 shrink-0" />
+                  {editError}
+                </p>
+              )}
+
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={handleSaveEdit}
+                  disabled={isSavingEdit}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-white transition-all active:scale-95 disabled:opacity-60"
+                  style={{ background: 'rgba(139,92,246,0.55)' }}
+                >
+                  {isSavingEdit ? (
+                    <div
+                      className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin"
+                    />
+                  ) : (
+                    <Save className="w-3.5 h-3.5" />
+                  )}
+                  Simpan
+                </button>
+                <button
+                  type="button"
+                  onClick={cancelEdit}
+                  disabled={isSavingEdit}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-white/60 hover:text-white transition-all disabled:opacity-60"
+                  style={{ background: 'rgba(255,255,255,0.07)', border: '1px solid rgba(255,255,255,0.1)' }}
+                >
+                  <X className="w-3.5 h-3.5" />
+                  Batal
+                </button>
+              </div>
             </div>
-            <div
-              className="inline-flex items-center gap-1.5 font-medium px-2 py-0.5 rounded"
-              style={{ background: 'rgba(255,255,255,0.06)', color: 'rgba(255,255,255,0.7)' }}
-            >
-              <Clock className="w-3.5 h-3.5 text-purple-400" />
-              <span>
-                {formatTime(schedule.start_time)} - {formatTime(schedule.end_time)}
-              </span>
+          ) : (
+            <div className="flex flex-wrap items-center gap-y-1 gap-x-3 text-xs mt-1">
+              <div
+                className="inline-flex items-center gap-1.5 font-medium px-2 py-0.5 rounded"
+                style={{ background: 'rgba(255,255,255,0.06)', color: 'rgba(255,255,255,0.7)' }}
+              >
+                <Calendar className="w-3.5 h-3.5 text-purple-400" />
+                <span>{formatDate(schedule.schedule_date || schedule.start_time)}</span>
+              </div>
+              <div
+                className="inline-flex items-center gap-1.5 font-medium px-2 py-0.5 rounded"
+                style={{ background: 'rgba(255,255,255,0.06)', color: 'rgba(255,255,255,0.7)' }}
+              >
+                <Clock className="w-3.5 h-3.5 text-purple-400" />
+                <span>
+                  {formatTime(schedule.start_time)} - {formatTime(schedule.end_time)}
+                </span>
+              </div>
             </div>
-          </div>
+          )}
         </div>
 
-        {/* Delete Button */}
-        <button
-          type="button"
-          onClick={handleDelete}
-          disabled={isDeleting}
-          title="Hapus jadwal"
-          className="p-1.5 rounded-lg text-white/25 hover:text-red-400 transition-all duration-150 disabled:opacity-50 shrink-0"
-          style={{ background: 'rgba(255,255,255,0.04)' }}
-        >
-          {isDeleting ? (
-            <div
-              className="w-4 h-4 border-2 border-t-transparent rounded-full animate-spin"
-              style={{ borderColor: 'rgba(239,68,68,0.5)', borderTopColor: 'transparent' }}
-            />
-          ) : (
-            <Trash2 className="w-4 h-4" />
-          )}
-        </button>
+        {/* Action Buttons (Edit & Delete) */}
+        {!isEditing && (
+          <div className="flex items-center gap-1 shrink-0">
+            {onUpdate && (
+              <button
+                type="button"
+                onClick={openEdit}
+                title="Edit hari & waktu jadwal"
+                className="p-1.5 rounded-lg text-white/55 hover:text-purple-300 hover:bg-purple-500/20 transition-all duration-150"
+                style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)' }}
+              >
+                <Pencil className="w-4 h-4" />
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={handleDelete}
+              disabled={isDeleting}
+              title="Hapus jadwal"
+              className="p-1.5 rounded-lg text-red-300 hover:text-red-200 hover:bg-red-500/25 transition-all duration-150 disabled:opacity-50"
+              style={{
+                background: 'rgba(239,68,68,0.14)',
+                border: '1px solid rgba(239,68,68,0.32)',
+              }}
+            >
+              {isDeleting ? (
+                <div
+                  className="w-4 h-4 border-2 border-t-transparent rounded-full animate-spin"
+                  style={{ borderColor: 'rgba(239,68,68,0.5)', borderTopColor: 'transparent' }}
+                />
+              ) : (
+                <Trash2 className="w-4 h-4" />
+              )}
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Description / Subtasks */}
-      {renderDescription(schedule.description)}
+      {!isEditing && renderDescription(schedule.description)}
     </div>
   );
 }

@@ -113,7 +113,7 @@ export default function ChatPanel({
                 style={{ background: 'rgba(255,255,255,0.06)', border: '1px dashed rgba(139,92,246,0.35)' }}
               >
                 <Paperclip className="w-3.5 h-3.5 text-purple-400" />
-                <span>Upload Foto / Dokumen Jadwal (PDF, Excel, JPG, PNG)</span>
+                <span>Upload Foto / Dokumen Jadwal (JPG/JPEG, PNG, PDF, Excel)</span>
               </button>
             </div>
           </div>
@@ -206,7 +206,7 @@ export default function ChatPanel({
           ref={fileInputRef}
           type="file"
           className="hidden"
-          accept=".jpg,.jpeg,.png,.webp,.pdf,.xlsx,.xls,.csv"
+          accept="image/jpeg,image/png,image/webp,.jpg,.jpeg,.jpe,.jfif,.png,.webp,.pdf,.xlsx,.xls,.csv"
           onChange={(e) => {
             const file = e.target.files?.[0];
             if (file && onUploadFile) {

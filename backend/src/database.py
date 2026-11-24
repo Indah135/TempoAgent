@@ -153,12 +153,33 @@ def update_schedule(schedule_id: str, updates: dict[str, Any]) -> dict[str, Any]
         "end_time",
         "status",
         "priority",
+        "workspace",
     }
-    payload = {k: v for k, v in updates.items() if k in allowed_keys and v is not None}
+    payload: dict[str, Any] = {}
+    for key, value in updates.items():
+        if key not in allowed_keys:
+            continue
+        if key == "workspace":
+            # Boleh None untuk menghapus tag workspace
+            payload[key] = value
+        elif value is not None:
+            payload[key] = value
     if not payload:
         return None
 
-    response = client.table(TABLE).update(payload).eq("id", schedule_id).execute()
+    try:
+        response = client.table(TABLE).update(payload).eq("id", schedule_id).execute()
+    except Exception as exc:
+        # Jika kolom workspace belum ada di Supabase, ulangi tanpa workspace
+        if "workspace" in payload and "workspace" in str(exc).lower():
+            payload.pop("workspace")
+            if not payload:
+                return None
+            response = (
+                client.table(TABLE).update(payload).eq("id", schedule_id).execute()
+            )
+        else:
+            raise exc
     if response.data:
         return response.data[0]
     return None
